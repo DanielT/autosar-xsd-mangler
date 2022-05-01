@@ -2,7 +2,7 @@ use std::{fs::File, collections::HashMap};
 use std::io::BufReader;
 use xml::{reader::{EventReader, XmlEvent}, common::{XmlVersion, Position, TextPosition}, name::OwnedName, attribute::OwnedAttribute};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdAttribute {
     pub(crate) name: String,
     pub(crate) typeref: String,
@@ -14,7 +14,7 @@ pub(crate) struct XsdAttributeGroup {
     pub(crate) attributes: Vec<XsdAttribute>
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum XsdRestriction {
     EnumValues {
         enumvalues: Vec<String>
@@ -29,19 +29,19 @@ pub(crate) enum XsdRestriction {
     Literal
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdExtension {
     pub(crate) basetype: String,
     pub(crate) attributes: Vec<XsdAttribute>,
     pub(crate) attribute_groups: Vec<String>
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdSimpleContent {
     pub(crate) extension: XsdExtension
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum XsdModelGroupItem {
     Group(String),
     //Sequence(Box<XsdSequence>),
@@ -49,11 +49,11 @@ pub(crate) enum XsdModelGroupItem {
     Element(XsdElement)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdSequence {
     pub(crate) items: Vec<XsdModelGroupItem>
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdChoice {
     pub(crate) min_occurs: usize,
     pub(crate) max_occurs: usize,
@@ -72,7 +72,7 @@ pub(crate) struct XsdGroup {
     pub(crate) item: XsdGroupItem
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdElement {
     pub(crate) name: String,
     pub(crate) typeref: String,
@@ -80,7 +80,7 @@ pub(crate) struct XsdElement {
     pub(crate) max_occurs: usize
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum XsdComplexTypeItem {
     SimpleContent(XsdSimpleContent),
     Group(String),
@@ -89,7 +89,7 @@ pub(crate) enum XsdComplexTypeItem {
     None
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct XsdComplexType {
     pub(crate) name: String,
     pub(crate) item: XsdComplexTypeItem,
@@ -97,13 +97,13 @@ pub(crate) struct XsdComplexType {
     pub(crate) mixed_content: bool
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum XsdSimpleType {
     Restriction(XsdRestriction),
     // Extension - this variant exists in the xsd specification, but is not used in the Autosar xsd files
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum XsdType {
     Base(String),
     Simple(XsdSimpleType),
@@ -181,7 +181,7 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
                 get_next_event(parser)?;
             }
             "group" => {
-                parse_group(parser, data, &elem_attributes)?;
+                parse_group(parser, data, &elem_attributes, vec![])?;
                 // parse_group adds the parsed group to data.groups
             }
             "simpleType" => {
@@ -193,11 +193,11 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
                 // parse_attribute_group adds the parsed attributeGroup to data.attribute_groups
             }
             "complexType" => {
-                parse_complex_type(parser, data, &elem_attributes, "schema")?;
+                parse_complex_type(parser, data, &elem_attributes, vec![])?;
                 // parse_complex_type adds the parsed complexType to data.types
             }
             "element" => {
-                let element = parse_element(parser, data, &elem_attributes)?;
+                let element = parse_element(parser, data, &elem_attributes, vec![])?;
                 data.root_elements.push(element);
             }
             _ => {
@@ -215,7 +215,7 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
 }
 
 
-fn parse_element(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>) -> Result<XsdElement, String> {
+fn parse_element(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>, mut prev_names: Vec<String>) -> Result<XsdElement, String> {
     let attr_name = get_required_attribute_value("name", attributes, &parser.position())?;
     let attr_typeref = get_attribute_value("type", attributes);
     let attr_max_occurs = get_attribute_value("maxOccurs", attributes);
@@ -235,6 +235,8 @@ fn parse_element(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attr
     } else {
         let mut typeref_opt = None;
 
+        extend_prev_names(&mut prev_names, &Some(attr_name));
+
         while let Some((local_name, elem_attributes)) = get_next_element(parser, "element")? {
             match local_name.as_ref() {
                 "annotation" => {
@@ -244,7 +246,7 @@ fn parse_element(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attr
                     typeref_opt = Some(parse_simple_type(parser, data, &elem_attributes)?);
                 }
                 "complexType" => {
-                    typeref_opt = Some(parse_complex_type(parser, data, &elem_attributes, attr_name)?);
+                    typeref_opt = Some(parse_complex_type(parser, data, &elem_attributes, prev_names.clone())?);
                 }
                 _ => {
                     return Err(format!("Error: found unexpected start of element tag \"{}\" at {}", local_name, parser.position()));
@@ -266,7 +268,7 @@ fn parse_element(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attr
 }
 
 
-fn parse_group(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>) -> Result<String, String> {
+fn parse_group(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>, mut prev_names: Vec<String>) -> Result<String, String> {
     let attr_name = get_attribute_value("name", attributes);
     let attr_typeref = get_attribute_value("ref", attributes);
 
@@ -279,16 +281,18 @@ fn parse_group(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attrib
         let mut sequence: Option<XsdSequence> = None;
         let mut choice: Option<XsdChoice> = None;
 
+        extend_prev_names(&mut prev_names, &Some(name));
+
         while let Some((local_name, elem_attributes)) = get_next_element(parser, "group")? {
             match local_name.as_ref() {
                 "annotation" => {
                     skip_annotation(parser)?;
                 }
                 "sequence" => {
-                    sequence = Some(parse_sequence(parser, data)?);
+                    sequence = Some(parse_sequence(parser, data, prev_names.clone())?);
                 }
                 "choice" => {
-                    choice = Some(parse_choice(parser, data, &elem_attributes)?);
+                    choice = Some(parse_choice(parser, data, &elem_attributes, prev_names.clone())?);
                 }
                 _ => {
                     return Err(format!("Error: found unexpected start of element tag \"{}\" at {}", local_name, parser.position()));
@@ -344,18 +348,25 @@ fn parse_simple_type(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, 
 }
 
 
-fn parse_complex_type(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>, parent_name: &str) -> Result<String, String> {
+fn parse_complex_type(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>, mut prev_names: Vec<String>) -> Result<String, String> {
     let attr_name = get_attribute_value("name", attributes);
     let mixed_content = get_attribute_value("mixed", attributes).unwrap_or("false") == "true";
     let mut item = XsdComplexTypeItem::None;
     let mut item_count = 0;
     let mut attribute_groups = Vec::new();
     
+    let num_prev_names = prev_names.len();
     let name = if let Some(name) = attr_name {
         name.to_owned()
+    } else if num_prev_names > 1 {
+        format!("{}-{}-TYPE", prev_names[num_prev_names - 2], prev_names[num_prev_names - 1])
+    } else if num_prev_names == 1 {
+        format!("{}-TYPE", prev_names[0])
     } else {
-        format!("{}-TYPE", parent_name)
+        todo!()
     };
+
+    extend_prev_names(&mut prev_names, &attr_name);
 
     while let Some((local_name, elem_attributes)) = get_next_element(parser, "complexType")? {
         match local_name.as_ref() {
@@ -367,15 +378,15 @@ fn parse_complex_type(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd,
                 item_count += 1;
             }
             "group" => {
-                item = XsdComplexTypeItem::Group(parse_group(parser, data, &elem_attributes)?);
+                item = XsdComplexTypeItem::Group(parse_group(parser, data, &elem_attributes, prev_names.clone())?);
                 item_count += 1;
             }
             "sequence" => {
-                item = XsdComplexTypeItem::Sequence(parse_sequence(parser, data)?);
+                item = XsdComplexTypeItem::Sequence(parse_sequence(parser, data, prev_names.clone())?);
                 item_count += 1;
             }
             "choice" => {
-                item = XsdComplexTypeItem::Choice(parse_choice(parser, data, &elem_attributes)?);
+                item = XsdComplexTypeItem::Choice(parse_choice(parser, data, &elem_attributes, prev_names.clone())?);
                 item_count += 1;
             }
             "attributeGroup" => {
@@ -392,13 +403,20 @@ fn parse_complex_type(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd,
     }
 
     let typeref = format!("AR:{}", name);
-
-    data.types.insert(typeref.clone(), XsdType::Complex(XsdComplexType {
+    let newtype = XsdType::Complex(XsdComplexType {
         name,
         item,
         attribute_groups,
         mixed_content
-    }));
+    });
+
+    if let Some(oldtype) = data.types.get(&typeref) {
+        if *oldtype != newtype {
+            println!("WARNING!! about to replace {oldtype:#?} by {newtype:#?}");
+        }
+    }
+
+    data.types.insert(typeref.clone(), newtype);
 
     Ok(typeref)
 }
@@ -499,7 +517,7 @@ fn parse_simple_content(parser: &mut EventReader<BufReader<File>>, data: &mut Xs
 }
 
 
-fn parse_sequence(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Result<XsdSequence, String> {
+fn parse_sequence(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, prev_names: Vec<String>) -> Result<XsdSequence, String> {
     let mut items = Vec::new();
 
     while let Some((local_name, elem_attributes)) = get_next_element(parser, "sequence")? {
@@ -510,14 +528,14 @@ fn parse_sequence(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> 
             "element" => {
                 items.push(
                     XsdModelGroupItem::Element(
-                        parse_element(parser, data, &elem_attributes)?
+                        parse_element(parser, data, &elem_attributes, prev_names.clone())?
                     )
                 );
             }
             "group" => {
                 items.push(
                     XsdModelGroupItem::Group(
-                        parse_group(parser, data, &elem_attributes)?
+                        parse_group(parser, data, &elem_attributes, prev_names.clone())?
                     )
                 );
             }
@@ -525,7 +543,7 @@ fn parse_sequence(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> 
                 items.push(
                     XsdModelGroupItem::Choice(
                         Box::new(
-                            parse_choice(parser, data, &elem_attributes)?
+                            parse_choice(parser, data, &elem_attributes, prev_names.clone())?
                         )
                     )
                 );
@@ -542,7 +560,7 @@ fn parse_sequence(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> 
 }
 
 
-fn parse_choice(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>) -> Result<XsdChoice, String> {
+fn parse_choice(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attributes: &Vec<OwnedAttribute>, prev_names: Vec<String>) -> Result<XsdChoice, String> {
     let mut items = Vec::new();
     let attr_max_occurs = get_attribute_value("maxOccurs", attributes);
     let attr_min_occurs = get_attribute_value("minOccurs", attributes);
@@ -555,14 +573,14 @@ fn parse_choice(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attri
             "element" => {
                 items.push(
                     XsdModelGroupItem::Element(
-                        parse_element(parser, data, &elem_attributes)?
+                        parse_element(parser, data, &elem_attributes, prev_names.clone())?
                     )
                 );
             }
             "group" => {
                 items.push(
                     XsdModelGroupItem::Group(
-                        parse_group(parser, data, &elem_attributes)?
+                        parse_group(parser, data, &elem_attributes, prev_names.clone())?
                     )
                 );
             }
@@ -570,7 +588,7 @@ fn parse_choice(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd, attri
                 items.push(
                     XsdModelGroupItem::Choice(
                         Box::new(
-                            parse_choice(parser, data, &elem_attributes)?
+                            parse_choice(parser, data, &elem_attributes, prev_names.clone())?
                         )
                     )
                 );
@@ -786,5 +804,22 @@ fn parse_occurs_attribute(attr_occurs: &Option<&str>) -> Result<usize, String> {
         }
     } else {
         Ok(1)
+    }
+}
+
+
+fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: &Option<&str>) {
+    if let Some(name) = attr_name {
+        let len = prev_names.len();
+        if len > 1 {
+            if prev_names[len-1].contains(*name) || name.contains(&prev_names[len-1]) {
+                prev_names.pop();
+                prev_names.push((*name).to_owned());
+            } else {
+                prev_names.push((*name).to_owned());
+            }
+        } else {
+            prev_names.push((*name).to_owned());
+        }
     }
 }

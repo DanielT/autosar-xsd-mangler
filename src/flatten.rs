@@ -3,38 +3,57 @@ use std::collections::HashMap;
 use super::*;
 use super::xsd::*;
 
-pub(crate) fn flatten_schema(data: &Xsd) -> Result<HashMap<String, ElementContent>, String> {
+pub(crate) fn flatten_schema(data: &Xsd) -> Result<HashMap<String, DataType>, String> {
 
     let mut work_queue = Vec::new();
-    let mut complete_types = HashMap::<String, ElementContent>::new();
+    let mut complete_types = HashMap::<String, DataType>::new();
 
     if data.root_elements.len() != 1 {
         return Err(format!("Error: There should only be one root element, <AUTOSAR>, but instead there are these: {:#?}", data.root_elements));
     }
 
     for element in &data.root_elements {
-        work_queue.push((element.name.clone(), element.typeref.clone()));
+        work_queue.push(element.typeref.clone());
     }
 
     while !work_queue.is_empty() {
-        let (cur_element_name, cur_element_typeref) = work_queue.pop().unwrap();
+        let cur_element_typeref = work_queue.pop().unwrap();
 
         if complete_types.get(&cur_element_typeref).is_none() {
-            let element_content = if let Some(element_type) = data.types.get(&cur_element_typeref) {
-                flatten_type(data, element_type, &cur_element_name)?
-            } else {
-                return Err(format!("Error: unresolvable type {}", cur_element_typeref))
-            };
+            let element_content = flatten_any(&cur_element_typeref, data)?;
 
-            match &element_content {
-                ElementContent::Elements { element_collection, .. } |
-                ElementContent::Mixed { element_collection, .. } => {
-                    for sub_elem in element_collection {
-                        work_queue.push((sub_elem.name.clone(), sub_elem.typeref.clone()));
+            if let Some(element_collection) = element_content.collection() {
+                for item in element_collection.items() {
+                    match item {
+                        ElementCollectionItem::Element(Element { typeref, .. }) |
+                        ElementCollectionItem::GroupRef(typeref) => {
+                            work_queue.push(typeref.clone());
+                        }
                     }
                 }
-                _ => {}
             }
+
+            if let Some(attributes) = element_content.attributes() {
+                for attr in attributes {
+                    match &attr.attribute_type {
+                        AttributeType::Basic(_) => {},
+                        AttributeType::Pattern { typename, maxlength, pattern } => {
+                            if complete_types.get(typename).is_none() {
+                                complete_types.insert(typename.clone(), DataType::Characters {
+                                    basetype: "xsd:string".to_owned(),
+                                    attributes: vec![],
+                                    max_length: maxlength.to_owned(),
+                                    restriction_pattern: Some(pattern.to_owned())
+                                });
+                            }
+                        },
+                        AttributeType::Enum(enumref) => {
+                            work_queue.push(enumref.clone());
+                        }
+                    }
+                }
+            }
+
             complete_types.insert(cur_element_typeref.clone(), element_content); 
         }
     }
@@ -43,10 +62,28 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<HashMap<String, ElementConten
 }
 
 
-fn flatten_type<'a>(data: &'a Xsd, element_type: &'a XsdType, name: &str) -> Result<ElementContent, String> {
+fn flatten_any(cur_element_typeref: &String, data: &Xsd) -> Result<DataType, String> {
+    let trlen = cur_element_typeref.len();
+    if cur_element_typeref.ends_with("-ELEMENTGROUP") && data.groups.get(&cur_element_typeref[0..trlen-13]).is_some() {
+        let xsd_group = data.groups.get(&cur_element_typeref[0..trlen-13]).unwrap();
+        let group_elements = flatten_group(data, xsd_group)?;
+        Ok(DataType::ElementsGroup {
+            element_collection: group_elements
+        })
+    } else {
+        if let Some(element_type) = data.types.get(cur_element_typeref) {
+            flatten_type(data, element_type, cur_element_typeref)
+        } else {
+            Err(format!("Error: unresolvable type {}", cur_element_typeref))
+        }
+    }
+}
+
+
+fn flatten_type<'a>(data: &'a Xsd, element_type: &'a XsdType, typename: &str) -> Result<DataType, String> {
     match element_type {
         XsdType::Base(typename) => {
-            Ok(ElementContent::Characters {
+            Ok(DataType::Characters {
                 basetype: typename.clone(),
                 restriction_pattern: None,
                 max_length: None,
@@ -54,16 +91,16 @@ fn flatten_type<'a>(data: &'a Xsd, element_type: &'a XsdType, name: &str) -> Res
             })
         }
         XsdType::Simple(simple_type) => {
-            flatten_simple_type(data, simple_type, name)
+            flatten_simple_type(data, simple_type, typename)
         }
         XsdType::Complex(complex_type) => {
-            flatten_complex_type(data, complex_type, name)
+            flatten_complex_type(data, complex_type)
         }
     }
 }
 
 
-fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType, _name: &str) -> Result<ElementContent, String> {
+fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType) -> Result<DataType, String> {
     let attributes = build_attribute_list(data, &Vec::new(), &complex_type.attribute_groups)?;
     match &complex_type.item {
         XsdComplexTypeItem::SimpleContent(simple_content) => {
@@ -72,7 +109,7 @@ fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType, _na
         XsdComplexTypeItem::Group(group_ref) => {
             if let Some(group) = data.groups.get(group_ref) {
                 let elements = flatten_group(data, group)?;
-                Ok(ElementContent::Elements {
+                Ok(DataType::Elements {
                     element_collection: elements,
                     attributes
                 })
@@ -83,22 +120,22 @@ fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType, _na
         XsdComplexTypeItem::Choice(choice) => {
             let elements = flatten_choice(data, choice)?;
             if complex_type.mixed_content {
-                if elements.into_iter().count() == 0 {
-                    Ok(ElementContent::Characters {
+                if elements.items().len() == 0 {
+                    Ok(DataType::Characters {
                         basetype: "xsd:string".to_string(),
                         restriction_pattern: None,
                         max_length: None,
                         attributes
                     })
                 } else {
-                    Ok(ElementContent::Mixed {
+                    Ok(DataType::Mixed {
                         element_collection: elements,
                         attributes,
                         basetype: "xsd:string".to_string()
                     })
                 }
             } else {
-                Ok(ElementContent::Elements {
+                Ok(DataType::Elements {
                     element_collection: elements,
                     attributes
                 })
@@ -106,7 +143,7 @@ fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType, _na
         }
         XsdComplexTypeItem::Sequence(sequence) => {
             let elements = flatten_sequence(data, sequence)?;
-            Ok(ElementContent::Elements {
+            Ok(DataType::Elements {
                 element_collection: elements,
                 attributes
             })
@@ -118,12 +155,12 @@ fn flatten_complex_type<'a>(data: &'a Xsd, complex_type: &'a XsdComplexType, _na
 }
 
 
-fn flatten_simple_content(data: &Xsd, simple_content: &XsdSimpleContent) -> Result<ElementContent, String> {
+fn flatten_simple_content(data: &Xsd, simple_content: &XsdSimpleContent) -> Result<DataType, String> {
     if let Some(basetype) = data.types.get(&simple_content.extension.basetype) {
         let mut attributes = build_attribute_list(data, &simple_content.extension.attributes, &simple_content.extension.attribute_groups)?;
         match basetype {
             XsdType::Base(typename) => {
-                Ok(ElementContent::Characters {
+                Ok(DataType::Characters {
                     basetype: typename.clone(),
                     restriction_pattern: None,
                     max_length: None,
@@ -134,8 +171,8 @@ fn flatten_simple_content(data: &Xsd, simple_content: &XsdSimpleContent) -> Resu
                 let mut simple_type = flatten_simple_type(data, simple_type, &simple_content.extension.basetype)?;
                 // append the attributes attached to the <extension> to the attributes gathered inside the <simpleType>
                 match &mut simple_type {
-                    ElementContent::Elements { attributes: inner_attributes, .. } |
-                    ElementContent::Characters { attributes: inner_attributes, .. } => {
+                    DataType::Elements { attributes: inner_attributes, .. } |
+                    DataType::Characters { attributes: inner_attributes, .. } => {
                         inner_attributes.append(&mut attributes);
                     }
                     _ => {}
@@ -143,11 +180,11 @@ fn flatten_simple_content(data: &Xsd, simple_content: &XsdSimpleContent) -> Resu
                 Ok(simple_type)
             }
             XsdType::Complex(complex_type) => {
-                let mut complex_type = flatten_complex_type(data, complex_type, &simple_content.extension.basetype)?;
+                let mut complex_type = flatten_complex_type(data, complex_type)?;
                 // append the attributes attached to the <extension> to the attributes gathered inside the <complexType>
                 match &mut complex_type {
-                    ElementContent::Elements { attributes: inner_attributes, .. } |
-                    ElementContent::Characters { attributes: inner_attributes, .. } => {
+                    DataType::Elements { attributes: inner_attributes, .. } |
+                    DataType::Characters { attributes: inner_attributes, .. } => {
                         inner_attributes.append(&mut attributes);
                     }
                     _ => {}
@@ -175,7 +212,7 @@ fn flatten_group(data: &Xsd, group: &XsdGroup) -> Result<ElementCollection, Stri
 
 
 fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCollection, String> {
-    let mut elements: Vec<ElementCollection> = Vec::new();
+    let mut elements: Vec<ElementCollectionItem> = Vec::new();
     let mut outer_amount = occurs_to_amount(choice.min_occurs, choice.max_occurs);
     let mut name = "".to_string();
 
@@ -194,14 +231,12 @@ fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCol
                             if inner_name == "" {
                                 inner_name = group_ref.split_at(3).1.to_owned();
                             }
-                            if sub_elements.len() > 0 {
-                                elements.push(ElementCollection::Sequence {
-                                    name: inner_name,
-                                    sub_elements
-                                });
+                            if sub_elements.len() == 1 {
+                                elements.push(sub_elements[0].clone());
+                            } else if sub_elements.len() > 0 {
+                                elements.push(ElementCollectionItem::GroupRef(format!("AR:{inner_name}-ELEMENTGROUP")));
                             }
                         }
-                        ElementCollection::Element(_) => todo!(),
                     }
                 } else {
                     return Err(format!("Error: unknown group ref {} found in sequence", group_ref));
@@ -215,11 +250,10 @@ fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCol
                     ElementCollection::Sequence {..} => {
                         todo!();
                     }
-                    ElementCollection::Element(_) => todo!(),
                 }
             }
             XsdModelGroupItem::Element(xsd_element) => {
-                elements.push(ElementCollection::Element(
+                elements.push(ElementCollectionItem::Element(
                     Element::new(xsd_element, data.version_info)
                 ));
             }
@@ -235,8 +269,8 @@ fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCol
 
 fn flatten_choice_choice(
     outer_choice: &XsdChoice,
-    elements: &mut Vec<ElementCollection>,
-    sub_elements: &mut Vec<ElementCollection>,
+    elements: &mut Vec<ElementCollectionItem>,
+    sub_elements: &mut Vec<ElementCollectionItem>,
     outer_amount: &mut ElementAmount,
     inner_amount: ElementAmount,
     outer_name: &mut String,
@@ -253,10 +287,6 @@ fn flatten_choice_choice(
         if *outer_amount == inner_amount {
             elements.append(sub_elements);
         } else {
-            // adjust the amount of each individual element
-            //     for elem in &mut choice_elements {
-            //         elem.amount = combine_amounts(elem.amount, inner_choice_amount);
-            //     }
             todo!()
         }
     }
@@ -264,71 +294,103 @@ fn flatten_choice_choice(
 
 
 fn flatten_sequence<'a>(data: &'a Xsd, sequence: &'a XsdSequence) -> Result<ElementCollection, String> {
-    let mut elements: Vec<ElementCollection> = Vec::new();
-
+    let mut flat_items = Vec::new();
     for item in &sequence.items {
         match item {
             XsdModelGroupItem::Group(group_ref) => {
                 if let Some(group) = data.groups.get(group_ref) {
-                    match flatten_group(data, group)? {
-                        ElementCollection::Choice {..} => {
-                            todo!();
-                        }
-                        ElementCollection::Sequence { mut sub_elements, ..} => {
-                            elements.append(&mut sub_elements);
-                        }
-                        ElementCollection::Element(_) => todo!(),
-                    }
+                    flat_items.push(flatten_group(data, group)?);
                 } else {
                     return Err(format!("Error: unknown group ref {} found in sequence", group_ref));
                 }
             }
             XsdModelGroupItem::Choice(choice) => {
-                match flatten_choice(data, choice)? {
-                    ElementCollection::Choice {mut sub_elements, amount: inner_choice_amount, name: inner_name} => {
-                        if sequence.items.len() == 1 {
-                            todo!()
-                        } else if sub_elements.len() == 1 {
-                            match &mut sub_elements[0] {
-                                ElementCollection::Choice { amount, .. } |
-                                ElementCollection::Element(Element { amount, .. }) => {
-                                    *amount = combine_amounts(*amount, inner_choice_amount);
-                                }
-                                _ => {}
-                            }
-                            elements.append(&mut sub_elements);
-                        } else {
-                            elements.push(
-                                ElementCollection::Choice { name: inner_name, sub_elements, amount: inner_choice_amount }
-                            );
-                        }
-                    }
-                    ElementCollection::Sequence {..} => {
-                        // elements.append(&mut sequence_elements);
-                        todo!()
-                    }
-                    ElementCollection::Element(_) => todo!(),
-                }
+                flat_items.push(flatten_choice(data, choice)?);
             }
             XsdModelGroupItem::Element(xsd_element) => {
-                elements.push(ElementCollection::Element(
-                    Element::new(xsd_element, data.version_info)
-                ));
+                flat_items.push(ElementCollection::Sequence {
+                    name: "".to_string(),
+                    sub_elements: vec![
+                        ElementCollectionItem::Element(
+                            Element::new(xsd_element, data.version_info)
+                        )
+                    ]
+                });
             }
         }
     }
 
-    Ok(ElementCollection::Sequence {
-        sub_elements: elements,
-        name: "".to_string()
-    })
+    let nonempty_inputs = flat_items.iter().filter(|item| item.items().len() > 0).count();
+    let mut elements: Vec<ElementCollectionItem> = Vec::new();
+    let mut replacement = None;
+
+    for (idx, item) in flat_items.iter_mut().enumerate() {
+        match item {
+            ElementCollection::Choice { name, sub_elements, amount } => {
+                if sub_elements.len() == 1 {
+                    // choice of only one element is actually no choice at all. The element can be added to the containing sequence
+                    // combine the amount of the choice structure and the amount of the single contained element
+                    match &mut sub_elements[0] {
+                        ElementCollectionItem::Element(Element { amount: element_amount, .. }) => {
+                            *element_amount = combine_amounts(*amount, *element_amount);
+                        }
+                        _ => {}
+                    }
+                    elements.append(sub_elements);
+                } else if sub_elements.len() > 0 {
+                    // only do anything with this Choice item if it actually contains any elements
+                    if nonempty_inputs == 1 {
+                        // this Choice item is the only item in the sequence that contains any elements, so the sequence can be turned into a choice
+                        replacement = Some(ElementCollection::Choice {
+                            sub_elements: sub_elements.clone(),
+                            amount: amount.clone(),
+                            name: name.clone()
+                        });
+                    } else if let XsdModelGroupItem::Group(group_ref) = &sequence.items[idx] {
+                        // the choice came from a group, we'll only keep a reference to that group here
+                        elements.push(
+                            ElementCollectionItem::GroupRef(format!("{group_ref}-ELEMENTGROUP"))
+                        );
+                    } else if data.groups.get(&format!("AR:{name}")).is_some() {
+                        // the choice came from a group, we'll only keep a reference to that group here
+                        elements.push(
+                            ElementCollectionItem::GroupRef(format!("AR:{name}-ELEMENTGROUP"))
+                        );
+                    } else {
+                        // println!("FALLBACK: weakening of sequence(choice [{name}], ...) to sequence\n{sequence:#?}");
+                        for sub_elem in sub_elements.iter_mut() {
+                            match sub_elem {
+                                ElementCollectionItem::Element(Element { amount: element_amount, .. }) => {
+                                    *element_amount = combine_amounts(*amount, *element_amount);
+                                }
+                                _ => {}
+                            }
+                        }
+                        elements.append(sub_elements);
+                    }
+                }
+            }
+            ElementCollection::Sequence { sub_elements, .. } => {
+                elements.append(sub_elements);
+            }
+        }
+    }
+
+    if let Some(repl) = replacement {
+        Ok(repl)
+    } else {
+        Ok(ElementCollection::Sequence {
+            sub_elements: elements,
+            name: "".to_string()
+        })
+    }
 }
 
 
-fn flatten_simple_type(data: &Xsd, simple_type: &XsdSimpleType, name: &str) -> Result<ElementContent, String> {
+fn flatten_simple_type(data: &Xsd, simple_type: &XsdSimpleType, typename: &str) -> Result<DataType, String> {
     match simple_type {
         XsdSimpleType::Restriction(XsdRestriction::Pattern { pattern, maxlength }) => {
-            Ok(ElementContent::Characters {
+            Ok(DataType::Characters {
                 basetype: "xsd:string".to_string(),
                 restriction_pattern: Some(pattern.clone()),
                 max_length: maxlength.clone(),
@@ -336,7 +398,7 @@ fn flatten_simple_type(data: &Xsd, simple_type: &XsdSimpleType, name: &str) -> R
             })
         }
         XsdSimpleType::Restriction(XsdRestriction::Plain { basetype }) => {
-            Ok(ElementContent::Characters {
+            Ok(DataType::Characters {
                 basetype: basetype.to_owned(),
                 restriction_pattern: None,
                 max_length: None,
@@ -344,7 +406,7 @@ fn flatten_simple_type(data: &Xsd, simple_type: &XsdSimpleType, name: &str) -> R
             })
         }
         XsdSimpleType::Restriction(XsdRestriction::Literal) => {
-            Ok(ElementContent::Characters {
+            Ok(DataType::Characters {
                 basetype: "xsd:string".to_string(),
                 restriction_pattern: None,
                 max_length: None,
@@ -353,8 +415,8 @@ fn flatten_simple_type(data: &Xsd, simple_type: &XsdSimpleType, name: &str) -> R
         }
         XsdSimpleType::Restriction(XsdRestriction::EnumValues { enumvalues }) => {
             let enumitems = enumvalues.iter().map(|e| (e.clone(), data.version_info)).collect();
-            Ok(ElementContent::Enum(EnumDefinition {
-                name: name.to_string(),
+            Ok(DataType::Enum(EnumDefinition {
+                name: typename.to_string(),
                 enumitems
             }))
         }
@@ -399,6 +461,7 @@ fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String>
                 match simple_type {
                     XsdSimpleType::Restriction(XsdRestriction::Pattern { pattern, maxlength }) => {
                         AttributeType::Pattern {
+                            typename: attr.typeref.clone(),
                             pattern: pattern.to_owned(),
                             maxlength: maxlength.clone()
                         }
@@ -409,12 +472,9 @@ fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String>
                     XsdSimpleType::Restriction(XsdRestriction::Literal) => {
                         return Err("WTF: preserve whitespace in an attribute ?!?!?!".to_string());
                     }
-                    XsdSimpleType::Restriction(XsdRestriction::EnumValues { enumvalues }) => {
-                        let enumitems = enumvalues.iter().map(|e| (e.clone(), data.version_info)).collect();
-                        AttributeType::Enum(EnumDefinition {
-                            name: attr.typeref.to_owned(),
-                            enumitems
-                        })
+                    XsdSimpleType::Restriction(XsdRestriction::EnumValues { .. }) => {
+                        // let enumitems = enumvalues.iter().map(|e| (e.clone(), data.version_info)).collect();
+                        AttributeType::Enum(attr.typeref.to_owned())
                     }                       
                 }
             }
@@ -435,7 +495,7 @@ fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String>
 }
 
 
-fn combine_amounts(amount_1: ElementAmount, amount_2: ElementAmount) -> ElementAmount {
+pub(crate) fn combine_amounts(amount_1: ElementAmount, amount_2: ElementAmount) -> ElementAmount {
     match (amount_1, amount_2) {
         (ElementAmount::ZeroOrOne, ElementAmount::ZeroOrOne) |        
         (ElementAmount::ZeroOrOne, ElementAmount::One) |

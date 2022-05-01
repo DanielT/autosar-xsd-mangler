@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::*;
 
-pub(crate) fn merge(merged_xsd: &mut HashMap<String, ElementContent>, input_xsd: &HashMap<String, ElementContent>) -> Result<(), String> {
+pub(crate) fn merge(merged_xsd: &mut HashMap<String, DataType>, input_xsd: &HashMap<String, DataType>) -> Result<(), String> {
     let keys_base: HashSet<String> = merged_xsd.keys().map(|k| k.clone()).collect();
     let keys_xsd: HashSet<String> = input_xsd.keys().map(|k| k.clone()).collect();
     let mut type_names:Vec<String> = keys_base.union(&keys_xsd).map(|k| k.clone()).collect();
@@ -26,26 +26,29 @@ pub(crate) fn merge(merged_xsd: &mut HashMap<String, ElementContent>, input_xsd:
 }
 
 
-fn merge_element_types(elem_type_name: &str, element: &mut ElementContent, element_new: &ElementContent) -> Result<(), String> {
+fn merge_element_types(elem_type_name: &str, element: &mut DataType, element_new: &DataType) -> Result<(), String> {
     match (element, element_new) {
-        (ElementContent::Elements { element_collection, attributes },
-         ElementContent::Elements { element_collection: element_collection_new, attributes: attributes_new }) => {
+        (DataType::Elements { element_collection, attributes },
+         DataType::Elements { element_collection: element_collection_new, attributes: attributes_new }) => {
             merge_element_collection(elem_type_name, element_collection, element_collection_new)?;
             merge_attributes(elem_type_name, attributes, attributes_new)?;
         }
-        (ElementContent::Mixed { element_collection, attributes, .. },
-         ElementContent::Mixed { element_collection: element_collection_new, attributes: attributes_new, .. }) => {
+        (DataType::Mixed { element_collection, attributes, .. },
+         DataType::Mixed { element_collection: element_collection_new, attributes: attributes_new, .. }) => {
             merge_element_collection(elem_type_name, element_collection, element_collection_new)?;
             merge_attributes(elem_type_name, attributes, attributes_new)?;
         }
-        (ElementContent::Characters { .. }, ElementContent::Characters { .. }) => {
+        (DataType::Characters { .. }, DataType::Characters { .. }) => {
             // nothing to merge
         }
-        (ElementContent::Enum(enumdef), ElementContent::Enum(enumdef_new)) => {
+        (DataType::Enum(enumdef), DataType::Enum(enumdef_new)) => {
             merge_enums(enumdef, enumdef_new)?;
         }
-        (cur, new) => {
-            return Err(format!("Error: mismatched element content types for <{}>:\n{:#?}\n{:#?}", elem_type_name, cur, new));
+        (DataType::ElementsGroup { element_collection }, DataType::ElementsGroup { element_collection: element_collection_new }) => {
+            merge_element_collection(elem_type_name, element_collection, element_collection_new)?;
+        }
+        _ => {
+            //return Err(format!("Error: mismatched element content types for <{}>:\n{:#?}\n{:#?}", elem_type_name, cur, new));
         }
     }    
     Ok(())
@@ -67,18 +70,14 @@ fn merge_element_collection(elem_type_name: &str, element_collection: &mut Eleme
                     .find(|(_idx, e)| e.name() == newelem.name())
                     .map(|(idx, _e)| idx) {
                         match (&mut sub_elements[find_pos], newelem) {
-                            (cur_elem @ ElementCollection::Choice { .. }, new_elem @ ElementCollection::Choice { .. }) |
-                            (cur_elem @ ElementCollection::Sequence { .. }, new_elem @ ElementCollection::Sequence { .. }) => {
-                                if cur_elem.name() == "" {
-                                    return Err(format!("Error: merging anonymous collections is not supported!"));
-                                }
-                                merge_element_collection("", cur_elem, new_elem)?;
-                            }
-                            (ElementCollection::Element(cur_elem), ElementCollection::Element(new_elem)) => {
+                            (ElementCollectionItem::Element(cur_elem), ElementCollectionItem::Element(new_elem)) => {
                                 cur_elem.version_info |= new_elem.version_info;
                             }
-                            _ => {
-                                return Err(format!("Error: merge of incompatible types"));
+                            (ElementCollectionItem::GroupRef(_), ElementCollectionItem::GroupRef(_)) => {
+                                // no merge needed
+                            }
+                            (a, b) => {
+                                return Err(format!("Error: merge of incompatible types: a:{a:#?} b:{b:#?}"));
                             }
                         }
     //                 // we've found a matching existing item
@@ -102,7 +101,7 @@ fn merge_element_collection(elem_type_name: &str, element_collection: &mut Eleme
     //         // }
         }
         (cur, new) => {
-            return Err(format!("Error: mismatched element collection types in <{}>, {:#?}, {:#?}", elem_type_name, cur, new));
+            // return Err(format!("Error: mismatched element collection types in <{}>, {:#?}, {:#?}", elem_type_name, cur, new));
         }
     }
     Ok(())
@@ -118,11 +117,6 @@ fn merge_attributes(_elem_type_name: &str, attributes: &mut Vec<Attribute>, attr
             .find(|(_idx, att)| att.name == newattr.name)
             .map(|(idx, _att)| idx) {
             attributes[find_pos].version_info |= newattr.version_info;
-
-            if let (AttributeType::Enum(enumdef), AttributeType::Enum(enumdef_new)) = (&mut attributes[find_pos].attribute_type, &newattr.attribute_type) {
-                merge_enums(enumdef, enumdef_new)?;
-            }
-
             insert_pos = find_pos + 1;
         } else {
             attributes.insert(insert_pos, newattr.clone());

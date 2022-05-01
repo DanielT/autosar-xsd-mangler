@@ -20,10 +20,11 @@ struct EnumDefinition {
 pub(crate) enum AttributeType {
     Basic(String),
     Pattern {
+        typename: String,
         pattern: String,
         maxlength: Option<usize>
     },
-    Enum(EnumDefinition)
+    Enum(String)
 }
 
 #[derive(Debug, Clone)]
@@ -49,28 +50,28 @@ enum ElementAmount {
     Any
 }
 
+
+#[derive(Debug, Clone)]
+enum ElementCollectionItem {
+    Element(Element),
+    GroupRef(String),
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ElementCollection {
     Choice {
         name: String,
-        sub_elements: Vec<ElementCollection>,
+        sub_elements: Vec<ElementCollectionItem>,
         amount: ElementAmount
     },
     Sequence {
         name: String,
-        sub_elements: Vec<ElementCollection>
+        sub_elements: Vec<ElementCollectionItem>
     },
-    Element(Element)
-}
-
-#[derive(Debug)]
-pub(crate) struct ElementCollectionIter<'a> {
-    iter_stack: Vec<std::slice::Iter<'a, ElementCollection>>,
-    single_item: Option<&'a Element>
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ElementContent {
+pub(crate) enum DataType {
     Elements {
         element_collection: ElementCollection,
         attributes: Vec<Attribute>
@@ -86,7 +87,10 @@ pub(crate) enum ElementContent {
         attributes: Vec<Attribute>,
         basetype: String,
     },
-    Enum(EnumDefinition)
+    Enum(EnumDefinition),
+    ElementsGroup {
+        element_collection: ElementCollection,
+    }
 }
 
 
@@ -135,6 +139,7 @@ fn core() -> Result<(), String> {
             let file = File::open(filepath).unwrap();
             println!("loading {}", filename);
             let xsd = Xsd::load(file, 1 << index)?;
+            // println!("\n\n######################\nXSD {friendly_name}:\n{xsd:#?}\n##################\n\n");
             xsd_desc.push((friendly_name, flatten::flatten_schema(&xsd)?));
         } else {
             println!("Error: XSD file \"{}\" for the standard {} was not found", filepath.to_string_lossy(), friendly_name);
@@ -166,18 +171,16 @@ fn core() -> Result<(), String> {
 }
 
 
-fn sanity_check(merged: &HashMap<String, ElementContent>) {
+fn sanity_check(merged: &HashMap<String, DataType>) {
     for (typename, elemcontent) in merged {
-        match elemcontent {
-            ElementContent::Elements { element_collection, .. } |
-            ElementContent::Mixed { element_collection, .. } => {
-                for elem in element_collection {
+        if let Some(element_collection) = elemcontent.collection() {
+            for item in element_collection.items() {
+                if let ElementCollectionItem::Element(elem) = item {
                     if merged.get(&elem.typeref).is_none() {
                         println!("sanity check failed - in type [{}] element <{}> references non-existent type [{}]", typename, elem.name, elem.typeref);
-                    }                    
+                    }    
                 }
             }
-            _ => {},
         }
     }
 }
@@ -193,101 +196,41 @@ fn main() {
 }
 
 
-impl<'a> Iterator for ElementCollectionIter<'a> {
-    type Item = &'a Element;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.single_item.is_some() {
-            let out = self.single_item;
-            self.single_item = None;
-            out
-        } else if !self.iter_stack.is_empty() {
-            loop {
-                match self.iter_stack.last_mut().unwrap().next() {
-                    Some(ElementCollection::Choice { sub_elements, .. }) |
-                    Some(ElementCollection::Sequence { sub_elements, .. }) => {
-                        self.iter_stack.push(sub_elements.iter())
-                    }
-                    Some(ElementCollection::Element(elem)) => {
-                        break Some(elem)
-                    }
-                    None => {
-                        self.iter_stack.pop();
-                        if self.iter_stack.is_empty() {
-                            break None
-                        }
-                    }
-                }
-            }
-        } else {
-            None
+impl DataType {
+    fn collection(&self) -> Option<&ElementCollection> {
+        match self {
+            DataType::ElementsGroup { element_collection } |
+            DataType::Elements { element_collection, .. } |
+            DataType::Mixed { element_collection, .. } => Some(element_collection),
+            _ => None,
         }
     }
-}
 
-impl<'a> IntoIterator for &'a ElementCollection {
-    type Item = &'a Element;
-
-    type IntoIter = ElementCollectionIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match &self {
-            ElementCollection::Choice { sub_elements, .. } |
-            ElementCollection::Sequence { sub_elements, .. } => {
-                Self::IntoIter {
-                    iter_stack: vec![sub_elements.iter()],
-                    single_item: None
-                }
-            }
-            ElementCollection::Element(elem) => {
-                Self::IntoIter {
-                    iter_stack: vec![],
-                    single_item: Some(elem)
-                } 
-            }
+    fn attributes(&self) -> Option<&Vec<Attribute>> {
+        match self {
+            DataType::Elements { attributes, .. } |
+            DataType::Characters { attributes, .. } |
+            DataType::Mixed { attributes, .. } => Some(attributes),
+            DataType::Enum(_) => None,
+            DataType::ElementsGroup { .. } => None,
         }
     }
 }
 
 impl ElementCollection {
-    fn name(&self) -> &str {
+    fn items(&self) -> &Vec<ElementCollectionItem> {
         match self {
-            ElementCollection::Choice { name, .. } => name,
-            ElementCollection::Sequence { name, .. } => name,
-            ElementCollection::Element(Element {name, ..}) => name
+            ElementCollection::Choice { sub_elements, .. } => sub_elements,
+            ElementCollection::Sequence { sub_elements, .. } => sub_elements,
         }
     }
 }
 
-#[test]
-fn element_collection_iter_test() {
-    let ec1 = ElementCollection::Sequence { name: "foo".to_string(), sub_elements: vec![] };
-    assert_eq!(ec1.into_iter().count(), 0);
-
-    let ec2 = ElementCollection::Sequence { name: "foo".to_string(), sub_elements: vec![
-        ElementCollection::Choice {
-            name: "FOO".to_string(),
-            sub_elements: vec![
-                ElementCollection::Element(
-                    Element { name: "Elem1".to_string(), amount: ElementAmount::One, typeref: "".to_string(), version_info: 0}
-                ),
-                ElementCollection::Element(
-                    Element { name: "Elem2".to_string(), amount: ElementAmount::One, typeref: "".to_string(), version_info: 0}
-                )
-            ],
-            amount: ElementAmount::Any
-        },
-        ElementCollection::Sequence {
-            name: "FOO".to_string(),
-            sub_elements: vec![
-                ElementCollection::Element(
-                    Element { name: "Elem3".to_string(), amount: ElementAmount::One, typeref: "".to_string(), version_info: 0}
-                ),
-                ElementCollection::Element(
-                    Element { name: "Elem4".to_string(), amount: ElementAmount::One, typeref: "".to_string(), version_info: 0}
-                )
-            ]
-        },
-    ]};
-    assert_eq!(ec2.into_iter().count(), 4);
+impl ElementCollectionItem {
+    fn name(&self) -> &str {
+        match self {
+            ElementCollectionItem::Element ( Element { name, ..} ) => name,
+            ElementCollectionItem::GroupRef (name ) => name,
+        }
+    }
 }
