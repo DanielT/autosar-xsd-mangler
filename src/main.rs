@@ -107,24 +107,96 @@ pub(crate) struct XsdFileInfo {
 }
 
 const XSD_CONFIG: [XsdFileInfo; 18] = [
-    XsdFileInfo {name: "AUTOSAR_4-0-1.xsd", ident:"Autosar_4_0_1", desc: "AUTOSAR 4.0.1"},
-    XsdFileInfo {name: "AUTOSAR_4-0-2.xsd", ident:"Autosar_4_0_2", desc: "AUTOSAR 4.0.2"},
-    XsdFileInfo {name: "AUTOSAR_4-0-3.xsd", ident:"Autosar_4_0_3", desc: "AUTOSAR 4.0.3"},
-    XsdFileInfo {name: "AUTOSAR_4-1-1.xsd", ident:"Autosar_4_1_1", desc: "AUTOSAR 4.1.1"},
-    XsdFileInfo {name: "AUTOSAR_4-1-2.xsd", ident:"Autosar_4_1_2", desc: "AUTOSAR 4.1.2"},
-    XsdFileInfo {name: "AUTOSAR_4-1-3.xsd", ident:"Autosar_4_1_3", desc: "AUTOSAR 4.1.3"},
-    XsdFileInfo {name: "AUTOSAR_4-2-1.xsd", ident:"Autosar_4_2_1", desc: "AUTOSAR 4.2.1"},
-    XsdFileInfo {name: "AUTOSAR_4-2-2.xsd", ident:"Autosar_4_2_2", desc: "AUTOSAR 4.2.2"},
-    XsdFileInfo {name: "AUTOSAR_4-3-0.xsd", ident:"Autosar_4_3_0", desc: "AUTOSAR 4.3.0"},
-    XsdFileInfo {name: "AUTOSAR_00042.xsd", ident:"Autosar_00042", desc: "AUTOSAR Adaptive 17-03"},
-    XsdFileInfo {name: "AUTOSAR_00043.xsd", ident:"Autosar_00043", desc: "AUTOSAR Adaptive 17-10"},
-    XsdFileInfo {name: "AUTOSAR_00044.xsd", ident:"Autosar_00044", desc: "AUTOSAR Classic 4.3.1"},
-    XsdFileInfo {name: "AUTOSAR_00045.xsd", ident:"Autosar_00045", desc: "AUTOSAR Adaptive 18-03"},
-    XsdFileInfo {name: "AUTOSAR_00046.xsd", ident:"Autosar_00046", desc: "AUTOSAR Classic 4.4.0 / Adaptive 18-10"},
-    XsdFileInfo {name: "AUTOSAR_00047.xsd", ident:"Autosar_00047", desc: "AUTOSAR Adaptive 19-03"},
-    XsdFileInfo {name: "AUTOSAR_00048.xsd", ident:"Autosar_00048", desc: "AUTOSAR 4.5.0"},
-    XsdFileInfo {name: "AUTOSAR_00049.xsd", ident:"Autosar_00049", desc: "AUTOSAR 4.6.0"},
-    XsdFileInfo {name: "AUTOSAR_00050.xsd", ident:"Autosar_00050", desc: "AUTOSAR 4.7.0"}
+    XsdFileInfo {
+        name: "AUTOSAR_4-0-1.xsd",
+        ident: "Autosar_4_0_1",
+        desc: "AUTOSAR 4.0.1",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-0-2.xsd",
+        ident: "Autosar_4_0_2",
+        desc: "AUTOSAR 4.0.2",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-0-3.xsd",
+        ident: "Autosar_4_0_3",
+        desc: "AUTOSAR 4.0.3",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-1-1.xsd",
+        ident: "Autosar_4_1_1",
+        desc: "AUTOSAR 4.1.1",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-1-2.xsd",
+        ident: "Autosar_4_1_2",
+        desc: "AUTOSAR 4.1.2",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-1-3.xsd",
+        ident: "Autosar_4_1_3",
+        desc: "AUTOSAR 4.1.3",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-2-1.xsd",
+        ident: "Autosar_4_2_1",
+        desc: "AUTOSAR 4.2.1",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-2-2.xsd",
+        ident: "Autosar_4_2_2",
+        desc: "AUTOSAR 4.2.2",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_4-3-0.xsd",
+        ident: "Autosar_4_3_0",
+        desc: "AUTOSAR 4.3.0",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00042.xsd",
+        ident: "Autosar_00042",
+        desc: "AUTOSAR Adaptive 17-03",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00043.xsd",
+        ident: "Autosar_00043",
+        desc: "AUTOSAR Adaptive 17-10",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00044.xsd",
+        ident: "Autosar_00044",
+        desc: "AUTOSAR Classic 4.3.1",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00045.xsd",
+        ident: "Autosar_00045",
+        desc: "AUTOSAR Adaptive 18-03",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00046.xsd",
+        ident: "Autosar_00046",
+        desc: "AUTOSAR Classic 4.4.0 / Adaptive 18-10",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00047.xsd",
+        ident: "Autosar_00047",
+        desc: "AUTOSAR Adaptive 19-03",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00048.xsd",
+        ident: "Autosar_00048",
+        desc: "AUTOSAR 4.5.0",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00049.xsd",
+        ident: "Autosar_00049",
+        desc: "AUTOSAR 4.6.0",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00050.xsd",
+        ident: "Autosar_00050",
+        desc: "AUTOSAR 4.7.0",
+    },
 ];
 
 fn core() -> Result<(), String> {
@@ -206,8 +278,7 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             if elem_replacements.get(typename1).is_none() {
                 for typename2 in elem_typenames.iter().skip(idx1 + 1) {
                     if elem_replacements.get(typename2).is_none()
-                        && autosar_types.element_types.get(typename1)
-                            == autosar_types.element_types.get(typename2)
+                        && autosar_types.element_types.get(typename1) == autosar_types.element_types.get(typename2)
                     {
                         elem_replacements.insert(typename2.to_owned(), typename1.to_owned());
                     }
@@ -219,8 +290,7 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             if char_replacements.get(typename1).is_none() {
                 for typename2 in char_typenames.iter().skip(idx1 + 1) {
                     if char_replacements.get(typename2).is_none()
-                        && autosar_types.character_types.get(typename1)
-                            == autosar_types.character_types.get(typename2)
+                        && autosar_types.character_types.get(typename1) == autosar_types.character_types.get(typename2)
                     {
                         char_replacements.insert(typename2.to_owned(), typename1.to_owned());
                     }
@@ -232,8 +302,7 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             match artype {
                 ElementDataType::Elements { element_collection, .. }
                 | ElementDataType::Mixed { element_collection, .. }
-                | ElementDataType::ElementsGroup { element_collection } => match element_collection
-                {
+                | ElementDataType::ElementsGroup { element_collection } => match element_collection {
                     ElementCollection::Choice { sub_elements, .. }
                     | ElementCollection::Sequence { sub_elements, .. } => {
                         for ec_item in sub_elements {
@@ -263,8 +332,7 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
                 _ => {}
             }
             match artype {
-                ElementDataType::Characters { basetype, .. }
-                | ElementDataType::Mixed { basetype, .. } => {
+                ElementDataType::Characters { basetype, .. } | ElementDataType::Mixed { basetype, .. } => {
                     if let Some(rep) = char_replacements.get(basetype) {
                         *basetype = rep.to_owned();
                     }
@@ -306,12 +374,11 @@ fn sanity_check(autosar_types: &AutosarDataTypes) {
         }
         if let Some(attributes) = elemcontent.attributes() {
             for attr in attributes {
-                if autosar_types
-                    .character_types
-                    .get(&attr.attribute_type)
-                    .is_none()
-                {
-                    println!("sanity check failed - in type [{typename}] attribute {} references non-existent type [{}]", attr.name, attr.attribute_type);
+                if autosar_types.character_types.get(&attr.attribute_type).is_none() {
+                    println!(
+                        "sanity check failed - in type [{typename}] attribute {} references non-existent type [{}]",
+                        attr.name, attr.attribute_type
+                    );
                 }
             }
         }
@@ -380,11 +447,31 @@ impl AutosarDataTypes {
             element_types: HashMap::new(),
         };
 
-        adt.character_types.insert("xsd:string".to_string(), CharacterDataType::String { max_length: None, preserve_whitespace: false });
-        adt.character_types.insert("xsd:NMTOKEN".to_string(), CharacterDataType::String { max_length: None, preserve_whitespace: false });
-        adt.character_types.insert("xsd:NMTOKENS".to_string(), CharacterDataType::String { max_length: None, preserve_whitespace: false });
-        adt.character_types.insert("xsd:unsignedInt".to_string(), CharacterDataType::UnsignedInteger );
-        adt.character_types.insert("xsd:double".to_string(), CharacterDataType::Double );
+        adt.character_types.insert(
+            "xsd:string".to_string(),
+            CharacterDataType::String {
+                max_length: None,
+                preserve_whitespace: false,
+            },
+        );
+        adt.character_types.insert(
+            "xsd:NMTOKEN".to_string(),
+            CharacterDataType::String {
+                max_length: None,
+                preserve_whitespace: false,
+            },
+        );
+        adt.character_types.insert(
+            "xsd:NMTOKENS".to_string(),
+            CharacterDataType::String {
+                max_length: None,
+                preserve_whitespace: false,
+            },
+        );
+        adt.character_types
+            .insert("xsd:unsignedInt".to_string(), CharacterDataType::UnsignedInteger);
+        adt.character_types
+            .insert("xsd:double".to_string(), CharacterDataType::Double);
 
         adt
     }

@@ -21,16 +21,9 @@ pub(crate) struct XsdAttributeGroup {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum XsdRestriction {
-    EnumValues {
-        enumvalues: Vec<String>,
-    },
-    Pattern {
-        pattern: String,
-        maxlength: Option<usize>,
-    },
-    Plain {
-        basetype: String,
-    },
+    EnumValues { enumvalues: Vec<String> },
+    Pattern { pattern: String, maxlength: Option<usize> },
+    Plain { basetype: String },
     Literal,
 }
 
@@ -65,19 +58,19 @@ pub(crate) struct XsdChoice {
     pub(crate) items: Vec<XsdModelGroupItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum XsdGroupItem {
     Choice(XsdChoice),
     Sequence(XsdSequence),
     None,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct XsdGroup {
     pub(crate) item: XsdGroupItem,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) struct XsdElement {
     pub(crate) name: String,
     pub(crate) typeref: String,
@@ -143,26 +136,16 @@ impl Xsd {
                 enumvalues: vec!["default".to_string(), "preserve".to_string()],
             })),
         );
-        data.types.insert(
-            "xsd:string".to_string(),
-            XsdType::Base("xsd:string".to_string()),
-        );
-        data.types.insert(
-            "xsd:NMTOKEN".to_string(),
-            XsdType::Base("xsd:NMTOKEN".to_string()),
-        );
-        data.types.insert(
-            "xsd:NMTOKENS".to_string(),
-            XsdType::Base("xsd:NMTOKENS".to_string()),
-        );
-        data.types.insert(
-            "xsd:unsignedInt".to_string(),
-            XsdType::Base("xsd:unsignedInt".to_string()),
-        );
-        data.types.insert(
-            "xsd:double".to_string(),
-            XsdType::Base("xsd:double".to_string()),
-        );
+        data.types
+            .insert("xsd:string".to_string(), XsdType::Base("xsd:string".to_string()));
+        data.types
+            .insert("xsd:NMTOKEN".to_string(), XsdType::Base("xsd:NMTOKEN".to_string()));
+        data.types
+            .insert("xsd:NMTOKENS".to_string(), XsdType::Base("xsd:NMTOKENS".to_string()));
+        data.types
+            .insert("xsd:unsignedInt".to_string(), XsdType::Base("xsd:unsignedInt".to_string()));
+        data.types
+            .insert("xsd:double".to_string(), XsdType::Base("xsd:double".to_string()));
 
         parse_schema(&mut parser, &mut data)?;
 
@@ -244,10 +227,7 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
     if let XmlEvent::EndDocument = end {
         Ok(())
     } else {
-        Err(format!(
-            "Error: found element {:?} when end of document was expected",
-            end
-        ))
+        Err(format!("Error: found element {:?} when end of document was expected", end))
     }
 }
 
@@ -287,12 +267,7 @@ fn parse_element(
                     typeref_opt = Some(parse_simple_type(parser, data, &elem_attributes)?);
                 }
                 "complexType" => {
-                    typeref_opt = Some(parse_complex_type(
-                        parser,
-                        data,
-                        &elem_attributes,
-                        prev_names.clone(),
-                    )?);
+                    typeref_opt = Some(parse_complex_type(parser, data, &elem_attributes, prev_names.clone())?);
                 }
                 _ => {
                     return Err(format!(
@@ -312,10 +287,7 @@ fn parse_element(
                 min_occurs,
             })
         } else {
-            Err(format!(
-                "Error: missing type for element at {}",
-                parser.position()
-            ))
+            Err(format!("Error: missing type for element at {}", parser.position()))
         }
     }
 }
@@ -352,12 +324,7 @@ fn parse_group(
                     sequence = Some(parse_sequence(parser, data, prev_names.clone())?);
                 }
                 "choice" => {
-                    choice = Some(parse_choice(
-                        parser,
-                        data,
-                        &elem_attributes,
-                        prev_names.clone(),
-                    )?);
+                    choice = Some(parse_choice(parser, data, &elem_attributes, prev_names.clone())?);
                 }
                 _ => {
                     return Err(format!(
@@ -421,10 +388,8 @@ fn parse_simple_type(
 
     if let Some(restriction) = restriction {
         let nameref = format!("AR:{}", name);
-        data.types.insert(
-            nameref,
-            XsdType::Simple(XsdSimpleType::Restriction(restriction)),
-        );
+        data.types
+            .insert(nameref, XsdType::Simple(XsdSimpleType::Restriction(restriction)));
 
         Ok(name.to_owned())
     } else {
@@ -451,11 +416,7 @@ fn parse_complex_type(
     let name = if let Some(name) = attr_name {
         name.to_owned()
     } else if num_prev_names > 1 {
-        format!(
-            "{}-{}-TYPE",
-            prev_names[num_prev_names - 2],
-            prev_names[num_prev_names - 1]
-        )
+        format!("{}-{}-TYPE", prev_names[num_prev_names - 2], prev_names[num_prev_names - 1])
     } else if num_prev_names == 1 {
         format!("{}-TYPE", prev_names[0])
     } else {
@@ -474,26 +435,15 @@ fn parse_complex_type(
                 item_count += 1;
             }
             "group" => {
-                item = XsdComplexTypeItem::Group(parse_group(
-                    parser,
-                    data,
-                    &elem_attributes,
-                    prev_names.clone(),
-                )?);
+                item = XsdComplexTypeItem::Group(parse_group(parser, data, &elem_attributes, prev_names.clone())?);
                 item_count += 1;
             }
             "sequence" => {
-                item =
-                    XsdComplexTypeItem::Sequence(parse_sequence(parser, data, prev_names.clone())?);
+                item = XsdComplexTypeItem::Sequence(parse_sequence(parser, data, prev_names.clone())?);
                 item_count += 1;
             }
             "choice" => {
-                item = XsdComplexTypeItem::Choice(parse_choice(
-                    parser,
-                    data,
-                    &elem_attributes,
-                    prev_names.clone(),
-                )?);
+                item = XsdComplexTypeItem::Choice(parse_choice(parser, data, &elem_attributes, prev_names.clone())?);
                 item_count += 1;
             }
             "attributeGroup" => {
@@ -551,8 +501,7 @@ fn parse_attribute_group(
         // a new attribute group is declared
         let mut attributes = Vec::new();
 
-        while let Some((local_name, elem_attributes)) = get_next_element(parser, "attributeGroup")?
-        {
+        while let Some((local_name, elem_attributes)) = get_next_element(parser, "attributeGroup")? {
             match local_name.as_ref() {
                 "annotation" => {
                     skip_annotation(parser)?;
@@ -621,10 +570,7 @@ fn parse_attribute(
     })
 }
 
-fn parse_simple_content(
-    parser: &mut EventReader<BufReader<File>>,
-    data: &mut Xsd,
-) -> Result<XsdSimpleContent, String> {
+fn parse_simple_content(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Result<XsdSimpleContent, String> {
     let mut extension = None;
 
     while let Some((local_name, elem_attributes)) = get_next_element(parser, "simpleContent")? {
@@ -645,10 +591,7 @@ fn parse_simple_content(
     if let Some(extension) = extension {
         Ok(XsdSimpleContent { extension })
     } else {
-        Err(format!(
-            "Error: simpleContent at {} has no extension",
-            parser.position()
-        ))
+        Err(format!("Error: simpleContent at {} has no extension", parser.position()))
     }
 }
 
@@ -681,12 +624,27 @@ fn parse_sequence(
                 )?));
             }
             "choice" => {
-                items.push(XsdModelGroupItem::Choice(Box::new(parse_choice(
-                    parser,
-                    data,
-                    &elem_attributes,
-                    prev_names.clone(),
-                )?)));
+                let choice_item = parse_choice(parser, data, &elem_attributes, prev_names.clone())?;
+                // transform every choice inside a sequence into a group(choice) instead
+                // for this we want a unique-but-stable name
+                let pns = prev_names.join("-");
+                if let Some(first_inner_name) = choice_item.items.get(0).map(|inner| inner.name()) {
+                    // only do anything else if the choice is not empty
+                    let choice_name = format!("AR:SEQUENCE-CHOICE--{pns}-{first_inner_name}");
+                    // now wrap the choice in a group and add it to the list of groups
+                    let newgroup = XsdGroup {
+                        item: XsdGroupItem::Choice(choice_item),
+                    };
+                    if let Some(existing_group) = data.groups.get(&choice_name) {
+                        if newgroup != *existing_group {
+                            println!("generated synthetic group {choice_name} twice with different content:\n{existing_group:#?}\n{newgroup:#?}");
+                        }
+                    } else {
+                        data.groups.insert(choice_name.clone(), newgroup);
+                    }
+                    // add a group reference to the current type
+                    items.push(XsdModelGroupItem::Group(choice_name));
+                }
             }
             _ => {
                 return Err(format!(
@@ -770,18 +728,15 @@ fn parse_restriction(
     while let Some((local_name, elem_attributes)) = get_next_element(parser, "restriction")? {
         match local_name.as_ref() {
             "enumeration" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value("value", &elem_attributes, &parser.position())?;
                 enumvalues.push(attrval.to_owned());
             }
             "pattern" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value("value", &elem_attributes, &parser.position())?;
                 pattern = Some(attrval.to_owned());
             }
             "maxLength" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value("value", &elem_attributes, &parser.position())?;
                 if let Ok(val) = attrval.parse() {
                     max_length = Some(val);
                 } else {
@@ -793,8 +748,7 @@ fn parse_restriction(
                 }
             }
             "whiteSpace" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value("value", &elem_attributes, &parser.position())?;
                 if attrval == "preserve" {
                     literal = true;
                 }
@@ -810,9 +764,7 @@ fn parse_restriction(
         get_element_end_tag(parser, &local_name)?;
     }
 
-    if (literal && (!enumvalues.is_empty() || pattern.is_some()))
-        || (!enumvalues.is_empty() && pattern.is_some())
-    {
+    if (literal && (!enumvalues.is_empty() || pattern.is_some())) || (!enumvalues.is_empty() && pattern.is_some()) {
         return Err(format!(
             "Error: properies for more than one variant found inside <restriction> anding at {}",
             parser.position()
@@ -902,11 +854,19 @@ fn skip_annotation(parser: &mut EventReader<BufReader<File>>) -> Result<(), Stri
 
 fn get_element_end_tag(parser: &mut EventReader<BufReader<File>>, tag: &str) -> Result<(), String> {
     let event = get_next_event(parser)?;
-    if let XmlEvent::EndElement { name: OwnedName{local_name, ..}, .. } = &event {
+    if let XmlEvent::EndElement {
+        name: OwnedName { local_name, .. },
+        ..
+    } = &event
+    {
         if local_name == tag {
             return Ok(());
         }
-    } else if let XmlEvent::StartElement { name: OwnedName{local_name, ..}, .. } = &event {
+    } else if let XmlEvent::StartElement {
+        name: OwnedName { local_name, .. },
+        ..
+    } = &event
+    {
         if local_name == "annotation" {
             skip_annotation(parser)?;
             return get_element_end_tag(parser, tag);
@@ -927,9 +887,7 @@ fn get_next_event(parser: &mut EventReader<BufReader<File>>) -> Result<XmlEvent,
     let mut done = false;
     while !done {
         match next_element {
-            Ok(XmlEvent::Whitespace(_))
-            | Ok(XmlEvent::Comment(_))
-            | Ok(XmlEvent::ProcessingInstruction { .. }) => {
+            Ok(XmlEvent::Whitespace(_)) | Ok(XmlEvent::Comment(_)) | Ok(XmlEvent::ProcessingInstruction { .. }) => {
                 next_element = parser.next();
             }
             _ => done = true,
@@ -972,11 +930,7 @@ fn get_next_element(
                 }
             }
             XmlEvent::StartDocument { .. } | XmlEvent::EndDocument => {
-                return Err(format!(
-                    "Error: unexpected {:?} at {}",
-                    cur_event,
-                    parser.position()
-                ));
+                return Err(format!("Error: unexpected {:?} at {}", cur_event, parser.position()));
             }
             _ => {}
         }
@@ -1004,10 +958,7 @@ fn get_required_attribute_value<'a>(
     if let Some(name) = get_attribute_value(key, attributes) {
         Ok(name)
     } else {
-        Err(format!(
-            "Error: mandatory attribute \"{}\" is missing at {}",
-            key, position
-        ))
+        Err(format!("Error: mandatory attribute \"{}\" is missing at {}", key, position))
     }
 }
 
@@ -1038,6 +989,17 @@ fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: &Option<&str>) {
             }
         } else {
             prev_names.push((*name).to_owned());
+        }
+    }
+}
+
+
+impl XsdModelGroupItem {
+    fn name(&self) -> String {
+        match self {
+            XsdModelGroupItem::Group(groupref) => groupref.clone(),
+            XsdModelGroupItem::Choice(_) => "CHOICE".to_string(),
+            XsdModelGroupItem::Element(_) => "ELEMENT".to_string(),
         }
     }
 }

@@ -34,11 +34,27 @@ pub enum AutosarVersion {
     );
 
     for (idx, xsd_file_info) in xsd_config.iter().enumerate() {
-        writeln!(generated,       r#"    {} = 0x{:x},"#, xsd_file_info.ident, 1<<idx).unwrap();
-        writeln!(match_lines,     r#"            "{}" => Some(Self::{}),"#, xsd_file_info.name, xsd_file_info.ident).unwrap();
-        writeln!(filename_lines,  r#"            Self::{} => "{}","#, xsd_file_info.ident, xsd_file_info.name).unwrap();
-        writeln!(desc_lines,      r#"            Self::{} => "{}","#, xsd_file_info.ident, xsd_file_info.desc).unwrap();
+        writeln!(generated, r#"    {} = 0x{:x},"#, xsd_file_info.ident, 1 << idx).unwrap();
+        writeln!(
+            match_lines,
+            r#"            "{}" => Some(Self::{}),"#,
+            xsd_file_info.name, xsd_file_info.ident
+        )
+        .unwrap();
+        writeln!(
+            filename_lines,
+            r#"            Self::{} => "{}","#,
+            xsd_file_info.ident, xsd_file_info.name
+        )
+        .unwrap();
+        writeln!(
+            desc_lines,
+            r#"            Self::{} => "{}","#,
+            xsd_file_info.ident, xsd_file_info.desc
+        )
+        .unwrap();
     }
+    let lastident = xsd_config[xsd_config.len() - 1].ident;
     writeln!(
         generated,
         r#"}}
@@ -62,6 +78,8 @@ impl AutosarVersion {{
 {desc_lines}
         }}
     }}
+
+    pub const LATEST: AutosarVersion = AutosarVersion::{lastident};
 }}
 
 impl std::fmt::Display for AutosarVersion {{
@@ -214,12 +232,7 @@ pub(crate) fn generate_character_types(autosar_schema: &AutosarDataTypes) -> Res
             CharacterDataType::UnsignedInteger => "CharacterDataSpec::UnsignedInteger".to_string(),
             CharacterDataType::Double => "CharacterDataSpec::Double".to_string(),
         };
-        writeln!(
-            generated,
-            "const CHARACTER_DATA_{}: CharacterDataSpec = {chdef};",
-            idx + 1
-        )
-        .unwrap();
+        writeln!(generated, "const CHARACTER_DATA_{}: CharacterDataSpec = {chdef};", idx + 1).unwrap();
         // char_types_map.insert(&***ctname, format!("CHARACTER_DATA_{}", idx+1));
     }
     writeln!(generated, "\n{VALIDATOR_REGEX_FUNTIONS}").unwrap();
@@ -239,48 +252,32 @@ pub(crate) fn generate_element_types(autosar_schema: &AutosarDataTypes) -> Resul
     let mut chartypenames: Vec<&String> = autosar_schema.character_types.keys().collect();
     chartypenames.sort();
 
+    // map each element type name to an index
     let elemtype_nameidx: HashMap<&str, usize> = elemtypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
         .collect();
+    // map each character type name to an index
     let chartype_nameidx: HashMap<&str, usize> = chartypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
         .collect();
-    let mut element_info: HashMap<String, String> = HashMap::new();
-    let mut attribute_info: HashMap<String, String> = HashMap::new();
+    // map from element definition string to the variable name emitted for that definition
+    let mut element_definitions: HashMap<String, String> = HashMap::new();
+    // map each attribute definition string to the variable name emitted for that definition
+    let mut attribute_definitions: HashMap<String, String> = HashMap::new();
 
     // empty element list and empty attribute list don't need a named variable, so are treated specially here
-    element_info.insert("".to_string(), "[]".to_string());
-    attribute_info.insert("".to_string(), "[]".to_string());
+    element_definitions.insert("".to_string(), "[]".to_string());
+    attribute_definitions.insert("".to_string(), "[]".to_string());
 
-    let elem_is_ref: Vec<bool> = elemtypenames
-        .iter()
-        .map(|name|
-            if let ElementDataType::Characters { basetype, .. } = autosar_schema.element_types.get(*name).unwrap() {
-                &*basetype == "AR:REF--SIMPLE"
-            } else {
-                false
-            }
-        )
-        .collect();
+    let elem_is_ref = build_ref_element_list(autosar_schema, &elemtypenames);
     // build a list that tells which elements have a SHORT-NAME and in which versions this is the case
-    let elem_is_named: Vec<usize> = elemtypenames
-        .iter()
-        .map(|name|
-            if let Some(ec) = autosar_schema.element_types.get(*name).unwrap().collection() {
-                if let Some(ElementCollectionItem::Element(sn)) = ec.items().iter().find(|sub_elem| sub_elem.name() == "SHORT-NAME") {
-                    sn.version_info
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        )
-        .collect();
+    let elem_is_named: Vec<usize> = build_named_element_list(autosar_schema, &elemtypenames);
+    // build a mapping from type names to elements which use that type
+    let element_names_of_typename = build_elementnames_of_type_list(autosar_schema);
 
     writeln!(
         elemtypes,
@@ -301,13 +298,13 @@ pub(crate) fn generate_element_types(autosar_schema: &AutosarDataTypes) -> Resul
         // build a string of all sub elements used by this element type
         let sub_element_text = build_sub_elements_string(sub_elements, &elemtype_nameidx);
         // ensure only one unique copy of each sub_element_text is created as a variable
-        let ename = if let Some(ename) = element_info.get(&sub_element_text) {
+        let ename = if let Some(ename) = element_definitions.get(&sub_element_text) {
             // reference to previously created variable
             ename.to_owned()
         } else {
             // create a new variable
-            let ename = format!("SUBELEMENTS_{}", element_info.len());
-            element_info.insert(sub_element_text.clone(), ename.clone());
+            let ename = format!("SUBELEMENTS_{}", element_definitions.len());
+            element_definitions.insert(sub_element_text.clone(), ename.clone());
             writeln!(
                 elemspec,
                 "const {ename}: [SubElement; {}] = [{sub_element_text}];",
@@ -320,13 +317,13 @@ pub(crate) fn generate_element_types(autosar_schema: &AutosarDataTypes) -> Resul
         // build a string of all attributes used by this element type
         let (attrs_len, attr_text) = build_attributes_string(elemtype, &chartype_nameidx);
         // ensure only one unique copy of each attr_text is created as a variable
-        let aname = if let Some(aname) = attribute_info.get(&attr_text) {
+        let aname = if let Some(aname) = attribute_definitions.get(&attr_text) {
             // reference to previously created variable
             aname.to_owned()
         } else {
             // create a new variable
-            let aname = format!("ATTRIBUTES_{}", attribute_info.len());
-            attribute_info.insert(attr_text.clone(), aname.clone());
+            let aname = format!("ATTRIBUTES_{}", attribute_definitions.len());
+            attribute_definitions.insert(attr_text.clone(), aname.clone());
             writeln!(
                 attrspec,
                 "const {aname}: [(AttributeName, &CharacterDataSpec, bool, u32); {}] = [{attr_text}];",
@@ -341,9 +338,20 @@ pub(crate) fn generate_element_types(autosar_schema: &AutosarDataTypes) -> Resul
         } else {
             "None".to_string()
         };
-        writeln!(elemtypes, "    /* {idx:4} */ ElementSpec {{sub_elements: &{ename}, attributes: &{aname}, \
-                             character_data: {chartype}, mode: {mode}, is_named: 0x{:x}, is_ref: {}}},",
-                             elem_is_named[idx], elem_is_ref[idx]).unwrap();
+        let infostring = if let Some(elems) = element_names_of_typename.get(*etypename) {
+            let mut elemlist: Vec<String> = elems.iter().cloned().collect();
+            elemlist.sort();
+            elemlist.join(", ")
+        } else {
+            "(sub-group)".to_owned()
+        };
+        writeln!(
+            elemtypes,
+            "    /* {idx:4} */ ElementSpec {{sub_elements: &{ename}, attributes: &{aname}, \
+                             character_data: {chartype}, mode: {mode}, is_named: 0x{:x}, is_ref: {}}}, // {infostring}",
+            elem_is_named[idx], elem_is_ref[idx]
+        )
+        .unwrap();
     }
     writeln!(elemtypes, "];\n").unwrap();
 
@@ -361,6 +369,65 @@ pub(crate) fn generate_element_types(autosar_schema: &AutosarDataTypes) -> Resul
     generated.write_str(&elemtypes).unwrap();
 
     Ok(generated)
+}
+
+
+fn build_named_element_list(autosar_schema: &AutosarDataTypes, elemtypenames: &[&String]) -> Vec<usize> {
+    elemtypenames
+        .iter()
+        .map(|name| {
+            if let Some(ec) = autosar_schema.element_types.get(*name).unwrap().collection() {
+                if let Some(ElementCollectionItem::Element(sn)) =
+                    ec.items().iter().find(|sub_elem| sub_elem.name() == "SHORT-NAME")
+                {
+                    sn.version_info
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        })
+        .collect()
+}
+
+
+fn build_ref_element_list(autosar_schema: &AutosarDataTypes, elemtypenames: &[&String]) -> Vec<bool> {
+    elemtypenames
+        .iter()
+        .map(|name| {
+            if let ElementDataType::Characters { basetype, .. } = autosar_schema.element_types.get(*name).unwrap() {
+                &*basetype == "AR:REF--SIMPLE"
+            } else {
+                false
+            }
+        })
+        .collect()
+}
+
+
+fn build_elementnames_of_type_list(autosar_schema: &AutosarDataTypes) -> HashMap<String, HashSet<String>> {
+    let mut map = HashMap::with_capacity(autosar_schema.element_types.len());
+
+    map.insert("AR:AUTOSAR".to_string(), HashSet::new());
+    map.get_mut("AR:AUTOSAR").unwrap().insert("AUTOSAR".to_string());
+
+    for definition in autosar_schema.element_types.values() {
+        if let Some(ec) = definition.collection() {
+            for item in ec.items() {
+                if let ElementCollectionItem::Element(Element { name, typeref, .. }) = item {
+                    if let Some(entry) = map.get_mut(typeref) {
+                        entry.insert(name.to_string());
+                    } else {
+                        map.insert(typeref.to_string(), HashSet::new());
+                        map.get_mut(typeref).unwrap().insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    map
 }
 
 
@@ -400,10 +467,7 @@ fn build_attributes_string(elemtype: &ElementDataType, chartype_nameidx: &HashMa
     let attrs = elemtype.attributes().unwrap_or(&emptyvec);
     let mut attr_strings: Vec<String> = Vec::new();
     for attr in attrs {
-        let chartype = format!(
-            "&CHARACTER_DATA_{}",
-            *chartype_nameidx.get(&*attr.attribute_type).unwrap() + 1
-        );
+        let chartype = format!("&CHARACTER_DATA_{}", *chartype_nameidx.get(&*attr.attribute_type).unwrap() + 1);
 
         attr_strings.push(format!(
             "(AttributeName::{}, {chartype}, {}, 0x{:x})",
@@ -613,31 +677,61 @@ pub(crate) enum CharacterDataSpec {
 // map a regex to a validation finction name
 const VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
     (r"^(0x[0-9a-z]*)$", "validate_regex_1"),
-    (r"^([1-9][0-9]*|0[xX][0-9a-fA-F]*|0[bB][0-1]+|0[0-7]*|UNSPECIFIED|UNKNOWN|BOOLEAN|PTR)$", "validate_regex_2"),
-    (r"^([1-9][0-9]*|0[xX][0-9a-fA-F]+|0[0-7]*|0[bB][0-1]+|ANY|ALL)$", "validate_regex_3"),
+    (
+        r"^([1-9][0-9]*|0[xX][0-9a-fA-F]*|0[bB][0-1]+|0[0-7]*|UNSPECIFIED|UNKNOWN|BOOLEAN|PTR)$",
+        "validate_regex_2",
+    ),
+    (
+        r"^([1-9][0-9]*|0[xX][0-9a-fA-F]+|0[0-7]*|0[bB][0-1]+|ANY|ALL)$",
+        "validate_regex_3",
+    ),
     (r"^([0-9]+|ANY)$", "validate_regex_4"),
     (r"^([0-9]+|STRING|ARRAY)$", "validate_regex_5"),
     (r"^(0|1|true|false)$", "validate_regex_6"),
     (r"^([a-zA-Z_][a-zA-Z0-9_]*)$", "validate_regex_7"),
     (r"^([a-zA-Z][a-zA-Z0-9_]*)$", "validate_regex_8"),
-    (r"^(([0-9]{4}-[0-9]{2}-[0-9]{2})(T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|([+\-][0-9]{2}:[0-9]{2})))?)$", "validate_regex_9"),
+    (
+        r"^(([0-9]{4}-[0-9]{2}-[0-9]{2})(T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|([+\-][0-9]{2}:[0-9]{2})))?)$",
+        "validate_regex_9",
+    ),
     (r"^([a-zA-Z][a-zA-Z0-9-]*)$", "validate_regex_10"),
     (r"^([0-9a-zA-Z_\-]+)$", "validate_regex_11"),
     (r"^(%[ \-+#]?[0-9]*(\.[0-9]+)?[diouxXfeEgGcs])$", "validate_regex_12"),
-    (r"^(0|[\+\-]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$", "validate_regex_13"),
-    (r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|ANY)$", "validate_regex_14"),
+    (
+        r"^(0|[\+\-]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$",
+        "validate_regex_13",
+    ),
+    (
+        r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|ANY)$",
+        "validate_regex_14",
+    ),
     (r"^([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){7,7}|ANY)$", "validate_regex_15"),
-    (r"^((0[xX][0-9a-fA-F]+)|(0[0-7]+)|(0[bB][0-1]+)|(([+\-]?[1-9][0-9]+(\.[0-9]+)?|[+\-]?[0-9](\.[0-9]+)?)([eE]([+\-]?)[0-9]+)?)|\.0|INF|-INF|NaN)$", "validate_regex_16"),
+    (
+        r"^((0[xX][0-9a-fA-F]+)|(0[0-7]+)|(0[bB][0-1]+)|(([+\-]?[1-9][0-9]+(\.[0-9]+)?|[+\-]?[0-9](\.[0-9]+)?)([eE]([+\-]?)[0-9]+)?)|\.0|INF|-INF|NaN)$",
+        "validate_regex_16",
+    ),
     (r"^(([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})$", "validate_regex_17"),
-    (r"^([a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*(\.[a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*)*)$", "validate_regex_18"),
+    (
+        r"^([a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*(\.[a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*)*)$",
+        "validate_regex_18",
+    ),
     (r"^([A-Z][a-zA-Z0-9_]*)$", "validate_regex_19"),
     (r"^([1-9][0-9]*)$", "validate_regex_20"),
-    (r"^(0|[\+]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$", "validate_regex_21"),
+    (
+        r"^(0|[\+]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$",
+        "validate_regex_21",
+    ),
     (r"^([a-zA-Z]([a-zA-Z0-9]|_[a-zA-Z0-9])*_?)$", "validate_regex_22"),
     (r"^(-?([0-9]+|MAX-TEXT-SIZE|ARRAY-SIZE))$", "validate_regex_23"),
-    (r"^(/?[a-zA-Z][a-zA-Z0-9_]{0,127}(/[a-zA-Z][a-zA-Z0-9_]{0,127})*)$", "validate_regex_24"),
+    (
+        r"^(/?[a-zA-Z][a-zA-Z0-9_]{0,127}(/[a-zA-Z][a-zA-Z0-9_]{0,127})*)$",
+        "validate_regex_24",
+    ),
     (r"^([0-9]+\.[0-9]+\.[0-9]+([\._;].*)?)$", "validate_regex_25"),
-    (r"^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-((0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?)$", "validate_regex_26"),
+    (
+        r"^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-((0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?)$",
+        "validate_regex_26",
+    ),
     (r"^([0-1])$", "validate_regex_27"),
     (r"^((-?[a-zA-Z_]+)(( )+-?[a-zA-Z_]+)*)$", "validate_regex_28"),
 ];

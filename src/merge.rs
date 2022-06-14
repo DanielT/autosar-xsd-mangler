@@ -7,14 +7,8 @@ struct MergeItems {
     char_types: Vec<(String, String)>,
 }
 
-pub(crate) fn merge(
-    merged_xsd: &mut AutosarDataTypes,
-    input_xsd: &AutosarDataTypes,
-) -> Result<(), String> {
-    let mut merge_queue = MergeItems::from_vecs(
-        vec![("AR:AUTOSAR".to_owned(), "AR:AUTOSAR".to_owned())],
-        Vec::new(),
-    );
+pub(crate) fn merge(merged_xsd: &mut AutosarDataTypes, input_xsd: &AutosarDataTypes) -> Result<(), String> {
+    let mut merge_queue = MergeItems::from_vecs(vec![("AR:AUTOSAR".to_owned(), "AR:AUTOSAR".to_owned())], Vec::new());
 
     let mut already_checked = HashSet::new();
     while let Some((typename_merged, typename_input)) = merge_queue.elem_types.pop() {
@@ -31,8 +25,7 @@ pub(crate) fn merge(
             }
 
             if merged_xsd.element_types.get(&typename_merged).is_some() {
-                let mut additional_items =
-                    merge_elem_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
+                let mut additional_items = merge_elem_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
                 merge_queue.append(&mut additional_items);
             }
             already_checked.insert(typename_merged);
@@ -106,17 +99,12 @@ fn merge_elem_types(
                 attributes: attributes_new,
             },
         ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-            )?);
+            result.append(&mut merge_element_collection(element_collection, elem_collection_new)?);
             result.append(&mut merge_attributes(attributes, attributes_new)?);
         }
         (
             ElementDataType::Characters {
-                attributes,
-                basetype,
-                ..
+                attributes, basetype, ..
             },
             ElementDataType::Characters {
                 attributes: attributes_new,
@@ -125,9 +113,7 @@ fn merge_elem_types(
             },
         ) => {
             result.append(&mut merge_attributes(attributes, attributes_new)?);
-            result
-                .char_types
-                .push((basetype.to_string(), basetype_new.to_string()));
+            result.char_types.push((basetype.to_string(), basetype_new.to_string()));
         }
         (
             ElementDataType::Mixed {
@@ -143,14 +129,9 @@ fn merge_elem_types(
                 ..
             },
         ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-            )?);
+            result.append(&mut merge_element_collection(element_collection, elem_collection_new)?);
             result.append(&mut merge_attributes(attributes, attributes_new)?);
-            result
-                .char_types
-                .push((basetype.to_string(), basetype_new.to_string()));
+            result.char_types.push((basetype.to_string(), basetype_new.to_string()));
         }
         (
             ElementDataType::ElementsGroup { element_collection },
@@ -158,10 +139,7 @@ fn merge_elem_types(
                 element_collection: elem_collection_new,
             },
         ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-            )?);
+            result.append(&mut merge_element_collection(element_collection, elem_collection_new)?);
         }
         (
             ElementDataType::Mixed { attributes, .. },
@@ -187,8 +165,7 @@ fn merge_element_collection(
     let mut insert_pos: usize = 0;
     let mut typesvec = MergeItems::new();
     match element_collection {
-        ElementCollection::Choice { sub_elements, .. }
-        | ElementCollection::Sequence { sub_elements, .. } => {
+        ElementCollection::Choice { sub_elements, .. } | ElementCollection::Sequence { sub_elements, .. } => {
             for newelem in element_collection_new.items() {
                 if let Some(find_pos) = sub_elements
                     .iter()
@@ -197,28 +174,18 @@ fn merge_element_collection(
                     .map(|(idx, _e)| idx)
                 {
                     match (&mut sub_elements[find_pos], newelem) {
-                        (
-                            ElementCollectionItem::Element(cur_elem),
-                            ElementCollectionItem::Element(new_elem),
-                        ) => {
+                        (ElementCollectionItem::Element(cur_elem), ElementCollectionItem::Element(new_elem)) => {
                             cur_elem.version_info |= new_elem.version_info;
                             // println!("    element {} requires merge of types {} and {}", cur_elem.name, cur_elem.typeref, new_elem.typeref);
                             typesvec
                                 .elem_types
                                 .push((cur_elem.typeref.clone(), new_elem.typeref.clone()));
                         }
-                        (
-                            ElementCollectionItem::GroupRef(cur_group),
-                            ElementCollectionItem::GroupRef(new_group),
-                        ) => {
-                            typesvec
-                                .elem_types
-                                .push((cur_group.clone(), new_group.clone()));
+                        (ElementCollectionItem::GroupRef(cur_group), ElementCollectionItem::GroupRef(new_group)) => {
+                            typesvec.elem_types.push((cur_group.clone(), new_group.clone()));
                         }
                         (a, b) => {
-                            return Err(format!(
-                                "Error: merge of incompatible types: a:{a:#?} b:{b:#?}"
-                            ));
+                            return Err(format!("Error: merge of incompatible types: a:{a:#?} b:{b:#?}"));
                         }
                     }
                     //                 // we've found a matching existing item
@@ -247,10 +214,7 @@ fn merge_element_collection(
     Ok(typesvec)
 }
 
-fn merge_attributes(
-    attributes: &mut Vec<Attribute>,
-    attributes_new: &Vec<Attribute>,
-) -> Result<MergeItems, String> {
+fn merge_attributes(attributes: &mut Vec<Attribute>, attributes_new: &Vec<Attribute>) -> Result<MergeItems, String> {
     let mut result = MergeItems::new();
     let mut insert_pos = 0;
     for newattr in attributes_new {
@@ -262,10 +226,9 @@ fn merge_attributes(
         {
             attributes[find_pos].version_info |= newattr.version_info;
 
-            result.char_types.push((
-                attributes[find_pos].attribute_type.clone(),
-                newattr.attribute_type.clone(),
-            ));
+            result
+                .char_types
+                .push((attributes[find_pos].attribute_type.clone(), newattr.attribute_type.clone()));
 
             insert_pos = find_pos + 1;
         } else {
@@ -317,10 +280,7 @@ impl MergeItems {
     }
 
     fn from_vecs(elem_types: Vec<(String, String)>, char_types: Vec<(String, String)>) -> Self {
-        Self {
-            elem_types,
-            char_types,
-        }
+        Self { elem_types, char_types }
     }
 
     fn append(&mut self, other: &mut Self) {
