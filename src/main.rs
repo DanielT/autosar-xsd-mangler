@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 use xsd::Xsd;
@@ -202,8 +201,8 @@ const XSD_CONFIG: [XsdFileInfo; 18] = [
 fn core() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 3 {
-        println!("usage: {} <input xsd path> <output file>", &args[0]);
+    if args.len() != 2 {
+        println!("usage: {} <input xsd path>", &args[0]);
         std::process::exit(1);
     }
 
@@ -246,10 +245,7 @@ fn core() -> Result<(), String> {
     dedup_types(&mut autosar_schema);
     sanity_check(&autosar_schema);
 
-    let genresult = generator::generate(&XSD_CONFIG, &autosar_schema)?;
-
-    let mut file = File::create(&args[2]).unwrap();
-    file.write_all(genresult.as_bytes()).unwrap();
+    generator::generate(&XSD_CONFIG, &autosar_schema)?;
 
     Ok(())
 }

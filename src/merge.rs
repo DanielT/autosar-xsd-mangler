@@ -161,11 +161,11 @@ fn merge_elem_types(
 fn merge_element_collection(
     element_collection: &mut ElementCollection,
     element_collection_new: &ElementCollection,
-    src_typename: &str
+    _src_typename: &str
 ) -> Result<MergeItems, String> {
     let mut insert_pos: usize = 0;
     let mut typesvec = MergeItems::new();
-    let is_sequence = if let ElementCollection::Sequence { .. } = element_collection {true} else {false};
+    // let is_sequence = if let ElementCollection::Sequence { .. } = element_collection {true} else {false};
     match element_collection {
         ElementCollection::Choice { sub_elements, .. } | ElementCollection::Sequence { sub_elements, .. } => {
             for newelem in element_collection_new.items() {
@@ -175,9 +175,9 @@ fn merge_element_collection(
                     .find(|(_idx, e)| e.name() == newelem.name())
                     .map(|(idx, _e)| idx)
                 {
-                    if is_sequence && find_pos < insert_pos {
-                        println!("ordering difference? {src_typename} -> elem: {}, find_pos: {find_pos} < insert pos {insert_pos}\n{sub_elements:#?}", newelem.name());
-                    }
+                    // if is_sequence && find_pos < insert_pos {
+                    //     println!("ordering difference? {src_typename} -> elem: {}, find_pos: {find_pos} < insert pos {insert_pos}\n{sub_elements:#?}", newelem.name());
+                    // }
                     match (&mut sub_elements[find_pos], newelem) {
                         (ElementCollectionItem::Element(cur_elem), ElementCollectionItem::Element(new_elem)) => {
                             cur_elem.version_info |= new_elem.version_info;
