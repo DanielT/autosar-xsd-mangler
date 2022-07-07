@@ -274,7 +274,8 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             if elem_replacements.get(typename1).is_none() {
                 for typename2 in elem_typenames.iter().skip(idx1 + 1) {
                     if elem_replacements.get(typename2).is_none()
-                        && autosar_types.element_types.get(typename1) == autosar_types.element_types.get(typename2)
+                        && autosar_types.element_types.get(typename1)
+                            == autosar_types.element_types.get(typename2)
                     {
                         elem_replacements.insert(typename2.to_owned(), typename1.to_owned());
                     }
@@ -286,7 +287,8 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             if char_replacements.get(typename1).is_none() {
                 for typename2 in char_typenames.iter().skip(idx1 + 1) {
                     if char_replacements.get(typename2).is_none()
-                        && autosar_types.character_types.get(typename1) == autosar_types.character_types.get(typename2)
+                        && autosar_types.character_types.get(typename1)
+                            == autosar_types.character_types.get(typename2)
                     {
                         char_replacements.insert(typename2.to_owned(), typename1.to_owned());
                     }
@@ -296,9 +298,14 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
 
         for (_, artype) in autosar_types.element_types.iter_mut() {
             match artype {
-                ElementDataType::Elements { element_collection, .. }
-                | ElementDataType::Mixed { element_collection, .. }
-                | ElementDataType::ElementsGroup { element_collection } => match element_collection {
+                ElementDataType::Elements {
+                    element_collection, ..
+                }
+                | ElementDataType::Mixed {
+                    element_collection, ..
+                }
+                | ElementDataType::ElementsGroup { element_collection } => match element_collection
+                {
                     ElementCollection::Choice { sub_elements, .. }
                     | ElementCollection::Sequence { sub_elements, .. } => {
                         for ec_item in sub_elements {
@@ -328,7 +335,8 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
                 _ => {}
             }
             match artype {
-                ElementDataType::Characters { basetype, .. } | ElementDataType::Mixed { basetype, .. } => {
+                ElementDataType::Characters { basetype, .. }
+                | ElementDataType::Mixed { basetype, .. } => {
                     if let Some(rep) = char_replacements.get(basetype) {
                         *basetype = rep.to_owned();
                     }
@@ -370,7 +378,11 @@ fn sanity_check(autosar_types: &AutosarDataTypes) {
         }
         if let Some(attributes) = elemcontent.attributes() {
             for attr in attributes {
-                if autosar_types.character_types.get(&attr.attribute_type).is_none() {
+                if autosar_types
+                    .character_types
+                    .get(&attr.attribute_type)
+                    .is_none()
+                {
                     println!(
                         "sanity check failed - in type [{typename}] attribute {} references non-existent type [{}]",
                         attr.name, attr.attribute_type
@@ -394,8 +406,12 @@ impl ElementDataType {
     fn collection(&self) -> Option<&ElementCollection> {
         match self {
             ElementDataType::ElementsGroup { element_collection }
-            | ElementDataType::Elements { element_collection, .. }
-            | ElementDataType::Mixed { element_collection, .. } => Some(element_collection),
+            | ElementDataType::Elements {
+                element_collection, ..
+            }
+            | ElementDataType::Mixed {
+                element_collection, ..
+            } => Some(element_collection),
             _ => None,
         }
     }
@@ -464,8 +480,10 @@ impl AutosarDataTypes {
                 preserve_whitespace: false,
             },
         );
-        adt.character_types
-            .insert("xsd:unsignedInt".to_string(), CharacterDataType::UnsignedInteger);
+        adt.character_types.insert(
+            "xsd:unsignedInt".to_string(),
+            CharacterDataType::UnsignedInteger,
+        );
         adt.character_types
             .insert("xsd:double".to_string(), CharacterDataType::Double);
 

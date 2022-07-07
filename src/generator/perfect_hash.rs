@@ -12,9 +12,16 @@ pub(crate) fn find_hash_parameters(input_strings: &[&str]) -> Option<(usize, usi
         for idx1 in 0..(distvalues.len() - 1) {
             let param1 = distvalues[idx1];
             for param2 in distvalues.iter().skip(idx1 + 1) {
-                if let Ok((_table1, _table2)) = make_perfect_hash(input_strings, param1, *param2, hashlen) {
-                    println!("hash func generated @hashlen={hashlen}, param1={param1}, param2={param2}");
-                    println!("size factor = {}", hashlen as f64 / input_strings.len() as f64);
+                if let Ok((_table1, _table2)) =
+                    make_perfect_hash(input_strings, param1, *param2, hashlen)
+                {
+                    println!(
+                        "hash func generated @hashlen={hashlen}, param1={param1}, param2={param2}"
+                    );
+                    println!(
+                        "size factor = {}",
+                        hashlen as f64 / input_strings.len() as f64
+                    );
                     return Some((hashlen, param1, *param2));
                 }
             }
@@ -24,7 +31,10 @@ pub(crate) fn find_hash_parameters(input_strings: &[&str]) -> Option<(usize, usi
         // for param2 in 257..5102 {
 
         // }
-        println!("   no success after {}s", now.elapsed().as_millis() as f64 / 1000.0);
+        println!(
+            "   no success after {}s",
+            now.elapsed().as_millis() as f64 / 1000.0
+        );
     }
 
     None
