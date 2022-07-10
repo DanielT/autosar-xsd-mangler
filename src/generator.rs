@@ -302,7 +302,7 @@ pub(crate) fn generate_character_types(
 
     writeln!(
         generated,
-        "pub(crate) const CHARACTER_DATA: [CharacterDataSpec; {}] = [",
+        "pub(crate) static CHARACTER_DATA: [CharacterDataSpec; {}] = [",
         ctnames.len()
     )
     .unwrap();
@@ -548,7 +548,7 @@ fn generate_subelements_array(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\npub(crate) const SUBELEMENTS: [SubElement; {}] = [\n",
+        "\npub(crate) static SUBELEMENTS: [SubElement; {}] = [\n",
         sub_elements.len()
     );
     generated.push_str(&build_sub_elements_string(sub_elements, &elemtype_nameidx));
@@ -570,7 +570,7 @@ fn generate_attributes_array(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\npub(crate) const ATTRIBUTES: [(AttributeName, usize, bool); {}] = [\n",
+        "\npub(crate) static ATTRIBUTES: [(AttributeName, usize, bool); {}] = [\n",
         attributes_array.len()
     );
     generated.push_str(&build_attributes_string(
@@ -584,7 +584,7 @@ fn generate_attributes_array(
 
 fn generate_versions_array(versions_array: &[usize]) -> String {
     let mut generated = format!(
-        "\npub(crate) const VERSION_INFO: [u32; {}] = [",
+        "\npub(crate) static VERSION_INFO: [u32; {}] = [",
         versions_array.len()
     );
     let ver_str = versions_array
@@ -641,7 +641,7 @@ fn generate_element_types(
 
     writeln!(
         elemtypes,
-        "\npub(crate) const DATATYPES: [ElementSpec; {}] = [",
+        "\npub(crate) static DATATYPES: [ElementSpec; {}] = [",
         autosar_schema.element_types.len()
     )
     .unwrap();
@@ -914,8 +914,6 @@ pub struct Parse{enum_name}Error;
         r##"
 impl {enum_name} {{
     const STRING_TABLE: [&'static str; {length}] = {item_names:?};
-    const HASH_TABLE_1: [u16; {hashsize}] = {table1:?};
-    const HASH_TABLE_2: [u16; {hashsize}] = {table2:?};
 
     /// derive an enum entry from an input string using a perfect hash function
     pub fn from_bytes(input: &[u8]) -> Result<Self, Parse{enum_name}Error> {{
@@ -923,10 +921,12 @@ impl {enum_name} {{
         // it is possible to create two tables so that
         //     table1[hashfunc(input, param1)] + table2[hashfunc(input, param2)] == desired enumeration value
         // these tables are pre-built and included here as constants, since the values to be hashed don't change
+        static HASH_TABLE_1: [u16; {hashsize}] = {table1:?};
+        static HASH_TABLE_2: [u16; {hashsize}] = {table2:?};
         let hashval1: usize = hashfunc(input, {param1});
         let hashval2: usize = hashfunc(input, {param2});
-        let val1 = {enum_name}::HASH_TABLE_1[hashval1 % {hashsize}];
-        let val2 = {enum_name}::HASH_TABLE_2[hashval2 % {hashsize}];
+        let val1 = HASH_TABLE_1[hashval1 % {hashsize}];
+        let val2 = HASH_TABLE_2[hashval2 % {hashsize}];
         if val1 == u16::MAX || val2 == u16::MAX {{
             return Err(Parse{enum_name}Error);
         }}
@@ -1006,7 +1006,7 @@ fn name_to_identifier(name: &str) -> String {
 }
 
 // map a regex to a validation finction name
-const VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
+static VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
     (r"^(0x[0-9a-z]*)$", "validate_regex_1"),
     (
         r"^([1-9][0-9]*|0[xX][0-9a-fA-F]*|0[bB][0-1]+|0[0-7]*|UNSPECIFIED|UNKNOWN|BOOLEAN|PTR)$",
