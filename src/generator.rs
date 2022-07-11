@@ -40,7 +40,7 @@ fn generate_xsd_versions(xsd_config: &[XsdFileInfo]) -> Result<(), String> {
 pub struct ParseAutosarVersionError;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 #[repr(u32)]
 /// Enum of all Autosar versions
 pub enum AutosarVersion {
@@ -895,7 +895,7 @@ pub struct Parse{enum_name}Error;
     generated
         .write_str(
             "#[allow(dead_code, non_camel_case_types)]
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
 #[repr(u16)]
 ",
         )

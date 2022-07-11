@@ -18,7 +18,10 @@ pub(crate) fn merge(
 
     let mut already_checked = HashSet::new();
     while let Some((typename_merged, typename_input)) = merge_queue.elem_types.pop() {
-        if already_checked.get(&typename_merged).is_none() {
+        if already_checked
+            .get(&(typename_merged.clone(), typename_input.clone()))
+            .is_none()
+        {
             // println!("  {typename_merged} <-> {typename_input}");
 
             // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
@@ -35,13 +38,16 @@ pub(crate) fn merge(
                     merge_elem_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
                 merge_queue.append(&mut additional_items);
             }
-            already_checked.insert(typename_merged);
+            already_checked.insert((typename_merged.clone(), typename_input.clone()));
         }
     }
 
     let mut already_checked = HashSet::new();
     while let Some((typename_merged, typename_input)) = merge_queue.char_types.pop() {
-        if already_checked.get(&typename_merged).is_none() {
+        if already_checked
+            .get(&(typename_merged.clone(), typename_input.clone()))
+            .is_none()
+        {
             if merged_xsd.character_types.get(&typename_merged).is_none() {
                 if let Some(input_type) = input_xsd.character_types.get(&typename_input) {
                     merged_xsd
@@ -54,7 +60,7 @@ pub(crate) fn merge(
                 merge_char_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
             }
 
-            already_checked.insert(typename_merged);
+            already_checked.insert((typename_merged, typename_input));
         }
     }
 
@@ -109,6 +115,8 @@ fn merge_elem_types(
             result.append(&mut merge_element_collection(
                 element_collection,
                 elem_collection_new,
+                &merged_xsd.character_types,
+                &input_xsd.character_types,
                 typename_input,
             )?);
             result.append(&mut merge_attributes(attributes, attributes_new)?);
@@ -147,6 +155,8 @@ fn merge_elem_types(
             result.append(&mut merge_element_collection(
                 element_collection,
                 elem_collection_new,
+                &merged_xsd.character_types,
+                &input_xsd.character_types,
                 typename_input,
             )?);
             result.append(&mut merge_attributes(attributes, attributes_new)?);
@@ -163,6 +173,8 @@ fn merge_elem_types(
             result.append(&mut merge_element_collection(
                 element_collection,
                 elem_collection_new,
+                &merged_xsd.character_types,
+                &input_xsd.character_types,
                 typename_input,
             )?);
         }
@@ -186,6 +198,8 @@ fn merge_elem_types(
 fn merge_element_collection(
     element_collection: &mut ElementCollection,
     element_collection_new: &ElementCollection,
+    character_types: &HashMap<String, CharacterDataType>,
+    character_types_new: &HashMap<String, CharacterDataType>,
     _src_typename: &str,
 ) -> Result<MergeItems, String> {
     let mut insert_pos: usize = 0;
@@ -198,7 +212,16 @@ fn merge_element_collection(
                 if let Some(find_pos) = sub_elements
                     .iter()
                     .enumerate()
-                    .find(|(_idx, e)| e.name() == newelem.name())
+                    .find(|(_idx, e)| {
+                        e.name() == newelem.name()
+                            && element_is_compatible(
+                                e,
+                                newelem,
+                                character_types,
+                                character_types_new,
+                            )
+                    })
+                    // .find(|(_idx, e)| e.name() == newelem.name())
                     .map(|(idx, _e)| idx)
                 {
                     // if is_sequence && find_pos < insert_pos {
@@ -314,6 +337,47 @@ fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) -> Re
         }
     }
     Ok(())
+}
+
+fn element_is_compatible(
+    item: &ElementCollectionItem,
+    item_new: &ElementCollectionItem,
+    character_types: &HashMap<String, CharacterDataType>,
+    character_types_new: &HashMap<String, CharacterDataType>,
+) -> bool {
+    match (item, item_new) {
+        (
+            ElementCollectionItem::Element(Element { typeref, .. }),
+            ElementCollectionItem::Element(Element {
+                typeref: typeref_new,
+                ..
+            }),
+        ) => {
+            matches!(
+                (
+                    character_types.get(typeref),
+                    character_types_new.get(typeref_new),
+                ),
+                (
+                    Some(CharacterDataType::Pattern { .. }),
+                    Some(CharacterDataType::Pattern { .. }),
+                ) | (
+                    Some(CharacterDataType::Enum(_)),
+                    Some(CharacterDataType::Enum(_))
+                ) | (
+                    Some(CharacterDataType::String { .. }),
+                    Some(CharacterDataType::String { .. }),
+                ) | (
+                    Some(CharacterDataType::UnsignedInteger),
+                    Some(CharacterDataType::UnsignedInteger),
+                ) | (
+                    Some(CharacterDataType::Double),
+                    Some(CharacterDataType::Double)
+                ) | (None, None)
+            )
+        }
+        _ => true,
+    }
 }
 
 impl MergeItems {
