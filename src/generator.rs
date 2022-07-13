@@ -570,7 +570,7 @@ fn generate_attributes_array(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\npub(crate) static ATTRIBUTES: [(AttributeName, usize, bool); {}] = [\n",
+        "\npub(crate) static ATTRIBUTES: [(AttributeName, u16, bool); {}] = [\n",
         attributes_array.len()
     );
     generated.push_str(&build_attributes_string(
