@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::env;
 use std::fs::File;
 use std::path::Path;
@@ -95,8 +95,8 @@ pub(crate) enum CharacterDataType {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct AutosarDataTypes {
-    element_types: HashMap<String, ElementDataType>,
-    character_types: HashMap<String, CharacterDataType>,
+    element_types: FxHashMap<String, ElementDataType>,
+    character_types: FxHashMap<String, CharacterDataType>,
 }
 
 pub(crate) struct XsdFileInfo {
@@ -266,8 +266,8 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             .collect::<Vec<String>>();
         char_typenames.sort_by(dedup_keycmp);
 
-        let mut elem_replacements = HashMap::new();
-        let mut char_replacements = HashMap::new();
+        let mut elem_replacements = FxHashMap::default();
+        let mut char_replacements = FxHashMap::default();
 
         for idx1 in 0..(elem_typenames.len() - 1) {
             let typename1 = &elem_typenames[idx1];
@@ -455,8 +455,8 @@ impl ElementCollectionItem {
 impl AutosarDataTypes {
     fn new() -> Self {
         let mut adt = Self {
-            character_types: HashMap::new(),
-            element_types: HashMap::new(),
+            character_types: FxHashMap::default(),
+            element_types: FxHashMap::default(),
         };
 
         adt.character_types.insert(

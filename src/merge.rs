@@ -198,8 +198,8 @@ fn merge_elem_types(
 fn merge_element_collection(
     element_collection: &mut ElementCollection,
     element_collection_new: &ElementCollection,
-    character_types: &HashMap<String, CharacterDataType>,
-    character_types_new: &HashMap<String, CharacterDataType>,
+    character_types: &FxHashMap<String, CharacterDataType>,
+    character_types_new: &FxHashMap<String, CharacterDataType>,
     _src_typename: &str,
 ) -> Result<MergeItems, String> {
     let mut insert_pos: usize = 0;
@@ -342,8 +342,8 @@ fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) -> Re
 fn element_is_compatible(
     item: &ElementCollectionItem,
     item_new: &ElementCollectionItem,
-    character_types: &HashMap<String, CharacterDataType>,
-    character_types_new: &HashMap<String, CharacterDataType>,
+    character_types: &FxHashMap<String, CharacterDataType>,
+    character_types_new: &FxHashMap<String, CharacterDataType>,
 ) -> bool {
     match (item, item_new) {
         (

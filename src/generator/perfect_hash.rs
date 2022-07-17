@@ -1,164 +1,135 @@
-#![allow(dead_code)]
+use std::{num::Wrapping, ops::BitXor};
 
-use std::collections::{HashMap, HashSet};
+// hashfunc inspired by FxHasher (rustc-hash)
+// unlike FxHasher, this code can't do 64bit ops, because the generated
+// perfect hash table should also work if compiled as 32 bit
+fn hashfunc(mut data: &[u8]) -> (u32, u32, u32) {
+    const HASHCONST1: u32 = 0x541C69B2; // these 4 constant values are not special, just random values
+    const HASHCONST2: u32 = 0x3B17161B;
 
-pub(crate) fn find_hash_parameters(input_strings: &[&str]) -> Option<(usize, usize, usize)> {
-    let upper_limit = input_strings.len();
-    let lower_limit = upper_limit / 2;
-    for hashlen in lower_limit..upper_limit {
-        println!("testing hashlen {hashlen}");
-        let now = std::time::Instant::now();
-        let distvalues = find_best_distribution(input_strings, hashlen);
-        for idx1 in 0..(distvalues.len() - 1) {
-            let param1 = distvalues[idx1];
-            for param2 in distvalues.iter().skip(idx1 + 1) {
-                if let Ok((_table1, _table2)) =
-                    make_perfect_hash(input_strings, param1, *param2, hashlen)
-                {
-                    println!(
-                        "hash func generated @hashlen={hashlen}, param1={param1}, param2={param2}"
-                    );
-                    println!(
-                        "size factor = {}",
-                        hashlen as f64 / input_strings.len() as f64
-                    );
-                    return Some((hashlen, param1, *param2));
+    let mut f1 = 0x33143C63u32;
+    let mut f2 = 0x88B0B21Eu32;
+    while data.len() >= 4 {
+        let val = u32::from_ne_bytes(data[..4].try_into().unwrap()) as u32;
+        f1 = f1.rotate_left(5).bitxor(val).wrapping_mul(HASHCONST1);
+        f2 = f2.rotate_left(6).bitxor(val).wrapping_mul(HASHCONST2);
+        data = &data[4..];
+    }
+    if data.len() >= 2 {
+        let val = u16::from_ne_bytes(data[..2].try_into().unwrap()) as u32;
+        f1 = f1.rotate_left(5).bitxor(val).wrapping_mul(HASHCONST1);
+        f2 = f2.rotate_left(6).bitxor(val).wrapping_mul(HASHCONST2);
+        data = &data[2..];
+    }
+    if !data.is_empty() {
+        f1 = f1
+            .rotate_left(5)
+            .bitxor(data[0] as u32)
+            .wrapping_mul(HASHCONST1);
+        f2 = f2
+            .rotate_left(6)
+            .bitxor(data[0] as u32)
+            .wrapping_mul(HASHCONST2);
+    }
+    let g = f1.bitxor(f2);
+    (g, f1, f2)
+}
+
+fn displace(f1: u32, f2: u32, d1: u32, d2: u32) -> u32 {
+    (Wrapping(d2) + Wrapping(f1) * Wrapping(d1) + Wrapping(f2)).0
+}
+
+// this code was copied from rust-phf 0.11 and then modified to better suit the use here
+// for a general purpose perfect hash generator see the original code: https://github.com/rust-phf/rust-phf
+//
+// changes:
+// - don't use siphash, instead use the above home-grown hash func, which is inspired by FxHasher (rustc-hash)
+// - make lambda a parameter instead of a constant. for some of the input data this allows more compact tables to be generated
+pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u32)> {
+    struct Bucket {
+        idx: usize,
+        keys: Vec<usize>,
+    }
+
+    let hashes: Vec<_> = entries
+        .iter()
+        .map(|entry| hashfunc(entry.as_bytes()))
+        .collect();
+
+    let buckets_len = (hashes.len() + lambda - 1) / lambda;
+    let mut buckets = (0..buckets_len)
+        .map(|i| Bucket {
+            idx: i,
+            keys: vec![],
+        })
+        .collect::<Vec<_>>();
+
+    for (i, hash) in hashes.iter().enumerate() {
+        buckets[(hash.0 % (buckets_len as u32)) as usize]
+            .keys
+            .push(i);
+    }
+
+    // Sort descending
+    buckets.sort_by(|a, b| a.keys.len().cmp(&b.keys.len()).reverse());
+
+    let table_len = hashes.len();
+    let mut map = vec![None; table_len];
+    let mut disps = vec![(0u32, 0u32); buckets_len];
+
+    // store whether an element from the bucket being placed is
+    // located at a certain position, to allow for efficient overlap
+    // checks. It works by storing the generation in each cell and
+    // each new placement-attempt is a new generation, so you can tell
+    // if this is legitimately full by checking that the generations
+    // are equal. (A u64 is far too large to overflow in a reasonable
+    // time for current hardware.)
+    let mut try_map = vec![0u64; table_len];
+    let mut generation = 0u64;
+
+    // the actual values corresponding to the markers above, as
+    // (index, key) pairs, for adding to the main map once we've
+    // chosen the right disps.
+    let mut values_to_add = vec![];
+
+    'buckets: for bucket in &buckets {
+        for d1 in 0..(table_len as u32) {
+            'disps: for d2 in 0..(table_len as u32) {
+                values_to_add.clear();
+                generation += 1;
+
+                for &key in &bucket.keys {
+                    let idx = (displace(hashes[key].1, hashes[key].2, d1, d2) % (table_len as u32))
+                        as usize;
+                    if map[idx].is_some() || try_map[idx] == generation {
+                        continue 'disps;
+                    }
+                    try_map[idx] = generation;
+                    values_to_add.push((idx, key));
                 }
+
+                // We've picked a good set of disps
+                disps[bucket.idx] = (d1, d2);
+                for &(idx, key) in &values_to_add {
+                    map[idx] = Some(key);
+                }
+                continue 'buckets;
             }
         }
-        // let param1 =
-        // println!("   param1 = {param1}");
-        // for param2 in 257..5102 {
 
-        // }
-        println!(
-            "   no success after {}s",
-            now.elapsed().as_millis() as f64 / 1000.0
+        // Unable to find displacements for a bucket
+        panic!(
+            "perfect hash generation failed ({} items, lambda {lambda})",
+            entries.len()
         );
     }
 
-    None
+    disps
 }
 
-fn find_best_distribution(input_strings: &[&str], hashsize: usize) -> Vec<usize> {
-    let mut distributions = Vec::with_capacity(input_strings.len());
-    // limits: lower limit 257 -> this ensures the multiplication step wil lalways create a value that cannot be gotten just through adding an u8
-    //         upper limit 65535 -> the higher bits don't contribute much to the end result, so trying higher values is likely a waste of time
-    for param in 257..65538 {
-        let mut buckets = vec![0; hashsize];
-        for in_str in input_strings {
-            let hashval = hashfunc(in_str.as_bytes(), param) % hashsize;
-            buckets[hashval] += 1;
-        }
-
-        let distval = buckets.iter().fold(0, |acc, val| acc + (val * val)) - input_strings.len();
-        distributions.push((distval, param));
-    }
-
-    distributions.sort_by(|item1, item2| item1.0.cmp(&item2.0));
-    let mut outvalues: Vec<usize> = distributions.iter().map(|item| item.1).collect();
-    outvalues.truncate(200);
-    outvalues
-}
-
-pub(crate) fn make_perfect_hash(
-    input_strings: &[&str],
-    param1: usize,
-    param2: usize,
-    hashlen: usize,
-) -> Result<(Vec<u16>, Vec<u16>), String> {
-    let datalen = input_strings.len();
-    let mut buckets1 = HashMap::<usize, HashSet<&str>>::with_capacity(hashlen);
-    let mut buckets2 = HashMap::<usize, HashSet<&str>>::with_capacity(hashlen);
-
-    for i in 0..hashlen {
-        buckets1.insert(i, HashSet::new());
-        buckets2.insert(i, HashSet::new());
-    }
-
-    for in_str in input_strings {
-        let hashval1 = hashfunc(in_str.as_bytes(), param1) % hashlen;
-        let hashval2 = hashfunc(in_str.as_bytes(), param2) % hashlen;
-        let set1 = buckets1.get_mut(&hashval1).unwrap();
-        let set2 = buckets2.get_mut(&hashval2).unwrap();
-        set1.insert(in_str);
-        set2.insert(in_str);
-
-        let intersect: HashSet<&&str> = set1.intersection(set2).collect();
-        if intersect.len() != 1 {
-            return Err("|set1 - set2 intersection| > 1".to_string());
-        }
-    }
-
-    let mut table1 = Vec::<u16>::with_capacity(hashlen);
-    table1.resize(hashlen, u16::MAX);
-    let mut table2 = Vec::<u16>::with_capacity(hashlen);
-    table2.resize(hashlen, u16::MAX);
-
-    let mut sorted_input = input_strings.to_vec();
-    sorted_input.sort();
-
-    let target_ids: HashMap<&str, u16> = sorted_input
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (*key, idx as u16))
-        .collect();
-    let mut unassigned_keys: HashSet<&str> = input_strings.iter().copied().collect();
-    let mut working_set: HashSet<&str> = HashSet::new();
-
-    // poor man's hypergraph peeling
-    while !unassigned_keys.is_empty() {
-        let key = *unassigned_keys.iter().next().unwrap();
-        unassigned_keys.remove(key);
-
-        working_set.insert(key);
-        while !working_set.is_empty() {
-            let key = *working_set.iter().next().unwrap();
-            working_set.remove(key);
-            unassigned_keys.remove(key);
-
-            let hashval1 = hashfunc(key.as_bytes(), param1) % hashlen;
-            let hashval2 = hashfunc(key.as_bytes(), param2) % hashlen;
-            let set1 = buckets1.get_mut(&hashval1).unwrap();
-            let set2 = buckets2.get_mut(&hashval2).unwrap();
-
-            let target_id = target_ids.get(key).unwrap();
-
-            if table1[hashval1] != u16::MAX && table2[hashval2] != u16::MAX {
-                return Err(format!("Error: badly chosen has function parameters; input = {key} - {hashval1} - {hashval2} - {set1:?} - {set2:?}"));
-            } else if table1[hashval1] != u16::MAX {
-                let mut tab2val: i32 = *target_id as i32 - table1[hashval1] as i32;
-                if tab2val < 0 {
-                    tab2val += datalen as i32;
-                }
-                table2[hashval2] = tab2val as u16;
-            } else if table2[hashval2] != u16::MAX {
-                let mut tab1val: i32 = *target_id as i32 - table2[hashval2] as i32;
-                if tab1val < 0 {
-                    tab1val += datalen as i32;
-                }
-                table1[hashval1] = tab1val as u16;
-            } else {
-                table1[hashval1] = *target_id;
-                table2[hashval2] = 0;
-            }
-            set1.remove(key);
-            set2.remove(key);
-
-            for other_key in set1.iter() {
-                working_set.insert(*other_key);
-            }
-            for other_key in set2.iter() {
-                working_set.insert(*other_key);
-            }
-        }
-    }
-
-    Ok((table1, table2))
-}
-
-pub(crate) fn hashfunc(data: &[u8], param: usize) -> usize {
-    data.iter().fold(100usize, |acc, val| {
-        usize::wrapping_add(usize::wrapping_mul(acc, param), *val as usize)
-    })
+#[inline]
+pub(crate) fn get_index(item: &str, disps: &[(u32, u32)], len: usize) -> usize {
+    let (g, f1, f2) = hashfunc(item.as_bytes());
+    let (d1, d2) = disps[(g % (disps.len() as u32)) as usize];
+    (displace(f1, f2, d1, d2) % (len as u32)) as usize
 }

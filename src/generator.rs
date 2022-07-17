@@ -6,15 +6,15 @@ mod perfect_hash;
 
 struct SubelementInfo {
     subelements_array: Vec<ElementCollectionItem>,
-    subelements_index_info: HashMap<String, (usize, usize)>,
+    subelements_index_info: FxHashMap<String, (usize, usize)>,
     versions_array: Vec<usize>,
-    versions_index_info: HashMap<String, usize>,
+    versions_index_info: FxHashMap<String, usize>,
 }
 
 struct AttributeInfo {
     attributes_array: Vec<Attribute>,
-    attributes_index_info: HashMap<String, (usize, usize)>,
-    attr_ver_index_info: HashMap<String, usize>,
+    attributes_index_info: FxHashMap<String, (usize, usize)>,
+    attr_ver_index_info: FxHashMap<String, usize>,
 }
 
 pub(crate) fn generate(
@@ -135,7 +135,7 @@ impl std::fmt::Display for AutosarVersion {{
 
 fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), String> {
     let mut attribute_names = HashSet::new();
-    let mut element_names = HashMap::<String, HashSet<String>>::new();
+    let mut element_names = FxHashMap::<String, HashSet<String>>::default();
     let mut enum_items = HashSet::new();
 
     element_names.insert("AUTOSAR".to_string(), HashSet::new());
@@ -182,47 +182,36 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
     enum_items.sort();
 
     let element_name_refs: Vec<&str> = element_names.iter().map(|name| &**name).collect();
-    // let (hashsize, param1, param2) = perfect_hash::find_hash_parameters(&element_name_refs).unwrap();
-    // let (hashsize, param1, param2) = (4753, 20751, 3074);
-    // let (hashsize, param1, param2) = (4701, 48655, 55675);
-    let (hashsize, param1, param2) = (4645, 19458, 3491);
+    let disps = perfect_hash::make_perfect_hash(&element_name_refs, 7);
     let enumstr = generate_enum(
         "ElementName",
         "Enum of all element names in Autosar",
         &element_name_refs,
-        hashsize,
-        param1,
-        param2,
+        disps,
     );
     use std::io::Write;
     let mut file = File::create("gen/elementname.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
 
     let attribute_name_refs: Vec<&str> = attribute_names.iter().map(|name| &**name).collect();
-    // let (hashsize, param1, param2) = perfect_hash::find_hash_parameters(&attribute_name_refs).unwrap();
-    let (hashsize, param1, param2) = (54, 13929, 17554);
+    let disps = perfect_hash::make_perfect_hash(&attribute_name_refs, 5);
     let enumstr = generate_enum(
         "AttributeName",
         "Enum of all attribute names in Autosar",
         &attribute_name_refs,
-        hashsize,
-        param1,
-        param2,
+        disps,
     );
     let mut file = File::create("gen/attributename.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
 
     let enum_item_refs: Vec<&str> = enum_items.iter().map(|name| &**name).collect();
-    // let (hashsize, param1, param2) = perfect_hash::find_hash_parameters(&enum_item_refs).unwrap();
-    // let (hashsize, param1, param2) = (1893, 47826, 2613);
-    let (hashsize, param1, param2) = (1869, 27359, 20733);
+    let disps = perfect_hash::make_perfect_hash(&enum_item_refs, 7);
+
     let enumstr = generate_enum(
         "EnumItem",
         "Enum of all possible enum values in Autosar",
         &enum_item_refs,
-        hashsize,
-        param1,
-        param2,
+        disps,
     );
     let mut file = File::create("gen/enumitem.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
@@ -292,7 +281,7 @@ pub(crate) fn generate_character_types(
 ) -> Result<String, String> {
     let mut generated = String::new();
 
-    let regexes: HashMap<String, String> = VALIDATOR_REGEX_MAPPING
+    let regexes: FxHashMap<String, String> = VALIDATOR_REGEX_MAPPING
         .iter()
         .map(|(regex, name)| (regex.to_string(), name.to_string()))
         .collect();
@@ -362,9 +351,9 @@ pub(crate) fn generate_character_types(
 fn build_subelements_info(autosar_schema: &AutosarDataTypes) -> Result<SubelementInfo, String> {
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     let mut subelements_array: Vec<ElementCollectionItem> = Vec::new();
-    let mut subelements_index_info = HashMap::new();
+    let mut subelements_index_info = FxHashMap::default();
     let mut versions_array = Vec::new();
-    let mut versions_index_info: HashMap<String, usize> = HashMap::new();
+    let mut versions_index_info: FxHashMap<String, usize> = FxHashMap::default();
 
     // sort the element type names so that the element types with the most sub elements are first
     elemtypenames
@@ -461,8 +450,8 @@ fn build_attributes_info(
 ) -> Result<AttributeInfo, String> {
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     let mut attributes_array = Vec::new();
-    let mut attributes_index_info = HashMap::new();
-    let mut attr_ver_index_info = HashMap::new();
+    let mut attributes_index_info = FxHashMap::default();
+    let mut attr_ver_index_info = FxHashMap::default();
 
     // sort the element type names so that the element types with the most sub elements are first
     elemtypenames.sort_by(|k1, k2| cmp_elemtypenames_attrs(k1, k2, &autosar_schema.element_types));
@@ -542,7 +531,7 @@ fn generate_subelements_array(
 ) -> String {
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     elemtypenames.sort();
-    let elemtype_nameidx: HashMap<&str, usize> = elemtypenames
+    let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
@@ -564,7 +553,7 @@ fn generate_attributes_array(
     let mut chartypenames: Vec<&String> = autosar_schema.character_types.keys().collect();
     chartypenames.sort();
     // map each character type name to an index
-    let chartype_nameidx: HashMap<&str, usize> = chartypenames
+    let chartype_nameidx: FxHashMap<&str, usize> = chartypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
@@ -599,10 +588,10 @@ fn generate_versions_array(versions_array: &[usize]) -> String {
 
 fn generate_element_types(
     autosar_schema: &AutosarDataTypes,
-    subelements_index_info: HashMap<String, (usize, usize)>,
-    subelements_ver_index_info: HashMap<String, usize>,
-    attributes_index_info: HashMap<String, (usize, usize)>,
-    attr_ver_index_info: HashMap<String, usize>,
+    subelements_index_info: FxHashMap<String, (usize, usize)>,
+    subelements_ver_index_info: FxHashMap<String, usize>,
+    attributes_index_info: FxHashMap<String, (usize, usize)>,
+    attr_ver_index_info: FxHashMap<String, usize>,
 ) -> Result<String, String> {
     let mut generated = String::new();
     let mut elemtypes = String::new();
@@ -613,21 +602,21 @@ fn generate_element_types(
     chartypenames.sort();
 
     // map each element type name to an index
-    let elemtype_nameidx: HashMap<&str, usize> = elemtypenames
+    let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
         .collect();
     // map each character type name to an index
-    let chartype_nameidx: HashMap<&str, usize> = chartypenames
+    let chartype_nameidx: FxHashMap<&str, usize> = chartypenames
         .iter()
         .enumerate()
         .map(|(idx, name)| (&***name, idx))
         .collect();
     // map from element definition string to the variable name emitted for that definition
-    let mut element_definitions: HashMap<String, String> = HashMap::new();
+    let mut element_definitions: FxHashMap<String, String> = FxHashMap::default();
     // map each attribute definition string to the variable name emitted for that definition
-    let mut attribute_definitions: HashMap<String, String> = HashMap::new();
+    let mut attribute_definitions: FxHashMap<String, String> = FxHashMap::default();
 
     // empty element list and empty attribute list don't need a named variable, so are treated specially here
     element_definitions.insert("".to_string(), "[]".to_string());
@@ -739,8 +728,9 @@ fn build_ref_element_list(
 
 fn build_elementnames_of_type_list(
     autosar_schema: &AutosarDataTypes,
-) -> HashMap<String, HashSet<String>> {
-    let mut map = HashMap::with_capacity(autosar_schema.element_types.len());
+) -> FxHashMap<String, HashSet<String>> {
+    let mut map = FxHashMap::default();
+    map.reserve(autosar_schema.element_types.len());
 
     map.insert("AR:AUTOSAR".to_string(), HashSet::new());
     map.get_mut("AR:AUTOSAR")
@@ -766,7 +756,7 @@ fn build_elementnames_of_type_list(
 
 fn build_sub_elements_string(
     sub_elements: &[ElementCollectionItem],
-    elemtype_nameidx: &HashMap<&str, usize>,
+    elemtype_nameidx: &FxHashMap<&str, usize>,
 ) -> String {
     let mut sub_element_strings: Vec<String> = Vec::new();
     for ec_item in sub_elements {
@@ -791,7 +781,10 @@ fn build_sub_elements_string(
     sub_element_strings.join(",\n")
 }
 
-fn build_attributes_string(attrs: &[Attribute], chartype_nameidx: &HashMap<&str, usize>) -> String {
+fn build_attributes_string(
+    attrs: &[Attribute],
+    chartype_nameidx: &FxHashMap<&str, usize>,
+) -> String {
     let mut attr_strings = Vec::new();
     for attr in attrs {
         let chartype = format!("{}", *chartype_nameidx.get(&*attr.attribute_type).unwrap());
@@ -829,7 +822,7 @@ fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
 fn cmp_elemtypenames_subelems(
     k1: &str,
     k2: &str,
-    elemtypes: &HashMap<String, ElementDataType>,
+    elemtypes: &FxHashMap<String, ElementDataType>,
 ) -> std::cmp::Ordering {
     let len1 = elemtypes
         .get(k1)
@@ -850,7 +843,7 @@ fn cmp_elemtypenames_subelems(
 fn cmp_elemtypenames_attrs(
     k1: &str,
     k2: &str,
-    elemtypes: &HashMap<String, ElementDataType>,
+    elemtypes: &FxHashMap<String, ElementDataType>,
 ) -> std::cmp::Ordering {
     let len1 = elemtypes
         .get(k1)
@@ -872,13 +865,12 @@ fn generate_enum(
     enum_name: &str,
     enum_docstring: &str,
     item_names: &[&str],
-    hashsize: usize,
-    param1: usize,
-    param2: usize,
+    disps: Vec<(u32, u32)>,
 ) -> String {
     let mut generated = String::new();
-    let (table1, table2) =
-        perfect_hash::make_perfect_hash(item_names, param1, param2, hashsize).unwrap();
+    // let disps =
+    //     perfect_hash::make_perfect_hash(item_names, 7);
+    let displen = disps.len();
 
     let width = item_names.iter().map(|name| name.len()).max().unwrap();
 
@@ -901,7 +893,15 @@ pub struct Parse{enum_name}Error;
         )
         .unwrap();
     writeln!(generated, "/// {enum_docstring}\npub enum {enum_name} {{").unwrap();
-    for (idx, item_name) in item_names.iter().enumerate() {
+    let mut hash_sorted_item_names = item_names.to_owned();
+    hash_sorted_item_names.sort_by(|k1, k2| {
+        perfect_hash::get_index(k1, &disps, item_names.len()).cmp(&perfect_hash::get_index(
+            k2,
+            &disps,
+            item_names.len(),
+        ))
+    });
+    for (idx, item_name) in hash_sorted_item_names.iter().enumerate() {
         let ident = name_to_identifier(item_name);
         writeln!(generated, "    /// {item_name}").unwrap();
         writeln!(generated, "    {ident:width$}= {idx},").unwrap();
@@ -913,24 +913,14 @@ pub struct Parse{enum_name}Error;
         generated,
         r##"
 impl {enum_name} {{
-    const STRING_TABLE: [&'static str; {length}] = {item_names:?};
+    const STRING_TABLE: [&'static str; {length}] = {hash_sorted_item_names:?};
 
     /// derive an enum entry from an input string using a perfect hash function
     pub fn from_bytes(input: &[u8]) -> Result<Self, Parse{enum_name}Error> {{
-        // here, hashfunc(input, <param>) is an ordinary hash function which may produce collisions
-        // it is possible to create two tables so that
-        //     table1[hashfunc(input, param1)] + table2[hashfunc(input, param2)] == desired enumeration value
-        // these tables are pre-built and included here as constants, since the values to be hashed don't change
-        static HASH_TABLE_1: [u16; {hashsize}] = {table1:?};
-        static HASH_TABLE_2: [u16; {hashsize}] = {table2:?};
-        let hashval1: usize = hashfunc(input, {param1});
-        let hashval2: usize = hashfunc(input, {param2});
-        let val1 = HASH_TABLE_1[hashval1 % {hashsize}];
-        let val2 = HASH_TABLE_2[hashval2 % {hashsize}];
-        if val1 == u16::MAX || val2 == u16::MAX {{
-            return Err(Parse{enum_name}Error);
-        }}
-        let item_idx = (val1 + val2) as usize % {length};
+        static DISPLACEMENTS: [(u16, u16); {displen}] = {disps:?};
+        let (g, f1, f2) = hashfunc(input);
+        let (d1, d2) = DISPLACEMENTS[(g % {displen}) as usize];
+        let item_idx = (d2 as u32).wrapping_add(f1.wrapping_mul(d1 as u32)).wrapping_add(f2) as usize % {length};
         if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
             return Err(Parse{enum_name}Error);
         }}
