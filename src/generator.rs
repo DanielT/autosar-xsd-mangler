@@ -345,6 +345,15 @@ pub(crate) fn generate_character_types(
     }
     generated.push_str("];\n");
 
+    let (reference_type_idx, _) = ctnames
+        .iter()
+        .enumerate()
+        .find(|(_, name)| **name == "AR:REF--SIMPLE")
+        .expect("reference type \"AR:REF--SIMPLE\" not found ?!");
+    generated.push_str(&format!(
+        "pub(crate) const REFERENCE_TYPE_IDX: u16 = {reference_type_idx};\n"
+    ));
+
     Ok(generated)
 }
 
@@ -622,9 +631,6 @@ fn generate_element_types(
     element_definitions.insert("".to_string(), "[]".to_string());
     attribute_definitions.insert("".to_string(), "[]".to_string());
 
-    let elem_is_ref = build_ref_element_list(autosar_schema, &elemtypenames);
-    // build a list that tells which elements have a SHORT-NAME and in which versions this is the case
-    let elem_is_named: Vec<usize> = build_named_element_list(autosar_schema, &elemtypenames);
     // build a mapping from type names to elements which use that type
     let element_names_of_typename = build_elementnames_of_type_list(autosar_schema);
 
@@ -660,8 +666,7 @@ fn generate_element_types(
             "    /* {idx:4} */ ElementSpec {{sub_elements: ({subelem_limit_low}, {subelem_limit_high}), \
                             sub_element_ver: {subelement_ver_info_low}, \
                             attributes: ({attrs_limit_low}, {attrs_limit_high}), attributes_ver: {attrs_ver_info_low}, \
-                            character_data: {chartype}, mode: {mode}, is_named: 0x{:x}, is_ref: {}}}, // {infostring}",
-            elem_is_named[idx], elem_is_ref[idx]
+                            character_data: {chartype}, mode: {mode}}}, // {infostring}"
         )
         .unwrap();
     }
@@ -677,53 +682,6 @@ fn generate_element_types(
     generated.write_str(&elemtypes).unwrap();
 
     Ok(generated)
-}
-
-fn build_named_element_list(
-    autosar_schema: &AutosarDataTypes,
-    elemtypenames: &[&String],
-) -> Vec<usize> {
-    elemtypenames
-        .iter()
-        .map(|name| {
-            if let Some(ec) = autosar_schema
-                .element_types
-                .get(*name)
-                .unwrap()
-                .collection()
-            {
-                if let Some(ElementCollectionItem::Element(sn)) = ec
-                    .items()
-                    .iter()
-                    .find(|sub_elem| sub_elem.name() == "SHORT-NAME")
-                {
-                    sn.version_info
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        })
-        .collect()
-}
-
-fn build_ref_element_list(
-    autosar_schema: &AutosarDataTypes,
-    elemtypenames: &[&String],
-) -> Vec<bool> {
-    elemtypenames
-        .iter()
-        .map(|name| {
-            if let ElementDataType::Characters { basetype, .. } =
-                autosar_schema.element_types.get(*name).unwrap()
-            {
-                basetype == "AR:REF--SIMPLE"
-            } else {
-                false
-            }
-        })
-        .collect()
 }
 
 fn build_elementnames_of_type_list(
