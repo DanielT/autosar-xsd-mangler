@@ -859,7 +859,8 @@ pub struct Parse{enum_name}Error;
             item_names.len(),
         ))
     });
-    for (idx, item_name) in hash_sorted_item_names.iter().enumerate() {
+    for item_name in item_names {
+        let idx = perfect_hash::get_index(item_name, &disps, item_names.len());
         let ident = name_to_identifier(item_name);
         writeln!(generated, "    /// {item_name}").unwrap();
         writeln!(generated, "    {ident:width$}= {idx},").unwrap();

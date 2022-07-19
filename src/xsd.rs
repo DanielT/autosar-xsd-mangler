@@ -599,7 +599,7 @@ fn parse_attribute(
     let (name, typeref) = if let Some(nameref) = attr_nameref {
         // hard coded special case - this is the only nameref used by attributes in the autosar xsd files
         if nameref == "xml:space" {
-            ("space".to_string(), "XML:SPACE".to_string())
+            ("xml:space".to_string(), "XML:SPACE".to_string())
         } else {
             return Err(format!(
                 "Error: input file used an attribute with an unexpected ref value at {}",
