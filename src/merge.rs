@@ -203,6 +203,14 @@ fn merge_element_collection(
     _src_typename: &str,
 ) -> Result<MergeItems, String> {
     let mut insert_pos: usize = 0;
+
+    // never insert any element in position 0 ahead of the SHORT-NAME
+    if let Some(ElementCollectionItem::Element(Element{ref name, ..})) = element_collection.items().get(0) {
+        if name == "SHORT-NAME" {
+            insert_pos = 1;
+        }
+    }
+
     let mut typesvec = MergeItems::new();
     // let is_sequence = if let ElementCollection::Sequence { .. } = element_collection {true} else {false};
     match element_collection {
