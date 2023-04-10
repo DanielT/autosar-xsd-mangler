@@ -36,6 +36,7 @@ fn generate_xsd_versions(xsd_config: &[XsdFileInfo]) -> Result<(), String> {
     let mut desc_lines = String::new();
     let mut generated = String::from(
         r##"
+#[derive(Debug)]
 /// Error type returned when from_str / parse for AutosarVersion fails
 pub struct ParseAutosarVersionError;
 
@@ -310,7 +311,7 @@ pub(crate) fn generate_character_types(
                 //     writeln!(validators, r#"regex!({regex_validator_name} br"{fullmatch_pattern}");"#).unwrap();
                 //     regexes.insert(fullmatch_pattern.clone(), regex_validator_name);
                 // }
-                let regex_validator_name = regexes.get(&fullmatch_pattern).unwrap();
+                let regex_validator_name = regexes.get(&fullmatch_pattern).expect(&format!("missing regex: {fullmatch_pattern}"));
                 format!(
                     r#"CharacterDataSpec::Pattern{{check_fn: {regex_validator_name}, regex: r"{pattern}", max_length: {max_length:?}}}"#
                 )
@@ -977,7 +978,7 @@ static VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
     (r"^([a-zA-Z][a-zA-Z0-9-]*)$", "validate_regex_10"),
     (r"^([0-9a-zA-Z_\-]+)$", "validate_regex_11"),
     (
-        r"^(%[ \-+#]?[0-9]*(\.[0-9]+)?[diouxXfeEgGcs])$",
+        r"^(%[ \-+#]?[0-9]*(\.[0-9]+)?[bBdiouxXfeEgGcs])$",
         "validate_regex_12",
     ),
     (
