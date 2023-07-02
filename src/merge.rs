@@ -7,10 +7,13 @@ struct MergeItems {
     char_types: Vec<(String, String)>,
 }
 
+// merge the content of of input_xsd into merged_xsd
+// merged_xsd is modified, input_xsd is not
 pub(crate) fn merge(
     merged_xsd: &mut AutosarDataTypes,
     input_xsd: &AutosarDataTypes,
 ) -> Result<(), String> {
+    // begin the merge at the top-level AR:AUTOSAR type, which must exist by definition
     let mut merge_queue = MergeItems::from_vecs(
         vec![("AR:AUTOSAR".to_owned(), "AR:AUTOSAR".to_owned())],
         Vec::new(),
@@ -106,10 +109,14 @@ fn merge_elem_types(
             ElementDataType::Elements {
                 element_collection,
                 attributes,
+                ordered,
+                splitable,
             },
             ElementDataType::Elements {
                 element_collection: elem_collection_new,
                 attributes: attributes_new,
+                ordered: ordered_new,
+                splitable: splitable_new,
             },
         ) => {
             result.append(&mut merge_element_collection(
@@ -120,6 +127,11 @@ fn merge_elem_types(
                 typename_input,
             )?);
             result.append(&mut merge_attributes(attributes, attributes_new)?);
+            // if either side of the merge is set to ordered, then ordered is always set in the merge result
+            if *ordered_new {
+                *ordered = true;
+            }
+            *splitable = *splitable | *splitable_new;
         }
         (
             ElementDataType::Characters {

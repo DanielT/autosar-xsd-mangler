@@ -33,7 +33,7 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                     if let Some(XsdType::Complex(complex_type)) =
                         data.types.get(&cur_element_typeref)
                     {
-                        let elemtype = flatten_complex_type(data, complex_type)?;
+                        let elemtype = flatten_complex_type(data, complex_type, &cur_element_typeref)?;
 
                         enqueue_dependencies(&mut work_queue, &elemtype);
                         autosar_schema
@@ -145,8 +145,19 @@ fn enqueue_dependencies(work_queue: &mut Vec<WorkQueueItem>, elemtype: &ElementD
 fn flatten_complex_type<'a>(
     data: &'a Xsd,
     complex_type: &'a XsdComplexType,
+    complex_type_name: &str,
 ) -> Result<ElementDataType, String> {
     let attributes = build_attribute_list(data, &Vec::new(), &complex_type.attribute_groups)?;
+    let (ordered, splitable) = if let Some(XsdGroupAttributes { ordered, splitable }) = data.group_attributes.get(complex_type_name) {
+        (*ordered, *splitable)
+    } else {
+        (false, false)
+    };
+    let splitable_ver = if splitable {
+        data.version_info
+    } else {
+        0
+    };
     match &complex_type.item {
         XsdComplexTypeItem::SimpleContent(simple_content) => {
             flatten_simple_content(data, simple_content)
@@ -157,6 +168,8 @@ fn flatten_complex_type<'a>(
                 Ok(ElementDataType::Elements {
                     element_collection: elements,
                     attributes,
+                    ordered,
+                    splitable: splitable_ver,
                 })
             } else {
                 Err(format!(
@@ -184,6 +197,8 @@ fn flatten_complex_type<'a>(
                 Ok(ElementDataType::Elements {
                     element_collection: elements,
                     attributes,
+                    ordered,
+                    splitable: splitable_ver,
                 })
             }
         }
@@ -192,7 +207,9 @@ fn flatten_complex_type<'a>(
             Ok(ElementDataType::Elements {
                 element_collection: elements,
                 attributes,
-            })
+                ordered,
+                splitable: splitable_ver,
+        })
         }
         XsdComplexTypeItem::None => Err("Error: empty complexType".to_string()),
     }
@@ -218,7 +235,7 @@ fn flatten_simple_content(
                 basetype: simple_content.extension.basetype.clone(),
             }),
             XsdType::Complex(complex_type) => {
-                let mut complex_type = flatten_complex_type(data, complex_type)?;
+                let mut complex_type = flatten_complex_type(data, complex_type, &simple_content.extension.basetype)?;
                 // append the attributes attached to the <extension> to the attributes gathered inside the <complexType>
                 match &mut complex_type {
                     ElementDataType::Elements {

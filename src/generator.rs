@@ -311,7 +311,9 @@ pub(crate) fn generate_character_types(
                 //     writeln!(validators, r#"regex!({regex_validator_name} br"{fullmatch_pattern}");"#).unwrap();
                 //     regexes.insert(fullmatch_pattern.clone(), regex_validator_name);
                 // }
-                let regex_validator_name = regexes.get(&fullmatch_pattern).expect(&format!("missing regex: {fullmatch_pattern}"));
+                let regex_validator_name = regexes
+                    .get(&fullmatch_pattern)
+                    .expect(&format!("missing regex: {fullmatch_pattern}"));
                 format!(
                     r#"CharacterDataSpec::Pattern{{check_fn: {regex_validator_name}, regex: r"{pattern}", max_length: {max_length:?}}}"#
                 )
@@ -644,6 +646,7 @@ fn generate_element_types(
     for (idx, etypename) in elemtypenames.iter().enumerate() {
         let elemtype = autosar_schema.element_types.get(*etypename).unwrap();
         let mode = calc_element_mode(elemtype);
+        let (ordered, splitable) = get_element_attributes(elemtype);
 
         let (subelem_limit_low, subelem_limit_high) =
             subelements_index_info.get(*etypename).unwrap();
@@ -667,7 +670,7 @@ fn generate_element_types(
             "    /* {idx:4} */ ElementSpec {{sub_elements: ({subelem_limit_low}, {subelem_limit_high}), \
                             sub_element_ver: {subelement_ver_info_low}, \
                             attributes: ({attrs_limit_low}, {attrs_limit_high}), attributes_ver: {attrs_ver_info_low}, \
-                            character_data: {chartype}, mode: {mode}}}, // {infostring}"
+                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splitable: {splitable}}}, // {infostring}"
         )
         .unwrap();
     }
@@ -725,7 +728,7 @@ fn build_sub_elements_string(
                     format!("    SubElement::Element{{name: ElementName::{}, elemtype: {}, multiplicity: ElementMultiplicity::{:?}}}",
                         name_to_identifier(&elem.name),
                         elemtype_nameidx.get(&*elem.typeref).unwrap(),
-                        elem.amount
+                        elem.amount,
                     )
                 );
             }
@@ -775,6 +778,17 @@ fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
         }
         ElementDataType::Characters { .. } => "ContentMode::Characters",
         ElementDataType::Mixed { .. } => "ContentMode::Mixed",
+    }
+}
+
+fn get_element_attributes(elemtype: &ElementDataType) -> (bool, usize) {
+    match elemtype {
+        ElementDataType::Elements {
+            ordered, splitable, ..
+        } => (*ordered, *splitable),
+        ElementDataType::ElementsGroup { .. } => (false, 0),
+        ElementDataType::Characters { .. } => (true, 0),
+        ElementDataType::Mixed { .. } => (true, 0),
     }
 }
 

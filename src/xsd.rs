@@ -77,6 +77,12 @@ pub(crate) struct XsdGroup {
     pub(crate) item: XsdGroupItem,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct XsdGroupAttributes {
+    pub(crate) ordered: bool,
+    pub(crate) splitable: bool,
+}
+
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(crate) struct XsdElement {
     pub(crate) name: String,
@@ -119,6 +125,7 @@ pub(crate) enum XsdType {
 pub(crate) struct Xsd {
     pub(crate) root_elements: Vec<XsdElement>,
     pub(crate) groups: HashMap<String, XsdGroup>,
+    pub(crate) group_attributes: HashMap<String, XsdGroupAttributes>,
     pub(crate) types: HashMap<String, XsdType>,
     pub(crate) attribute_groups: HashMap<String, XsdAttributeGroup>,
     pub(crate) version_info: usize,
@@ -132,6 +139,7 @@ impl Xsd {
         let mut data = Xsd {
             attribute_groups: HashMap::new(),
             groups: HashMap::new(),
+            group_attributes: HashMap::new(),
             types: HashMap::new(),
             root_elements: Vec::new(),
             version_info,
@@ -264,9 +272,36 @@ fn parse_element(
 
     let max_occurs = parse_occurs_attribute(&attr_max_occurs)?;
     let min_occurs = parse_occurs_attribute(&attr_min_occurs)?;
+    let mut mm_attributes = HashMap::new();
 
     if let Some(typeref) = attr_typeref {
-        get_element_end_tag(parser, "element")?;
+        while let Some((local_name, _)) = get_next_element(parser, "element")? {
+            match local_name.as_ref() {
+                "annotation" => {
+                    mm_attributes = parse_mm_attributes_from_annotation(parser)?;
+                }
+                _ => {
+                    return Err(format!(
+                        "Error: found unexpected start of element tag \"{}\" at {}",
+                        local_name,
+                        parser.position()
+                    ));
+                }
+            }
+        }
+        let ordered = mm_attributes
+            .get("pureMM.isOrdered")
+            .and_then(|val| Some(val == "true"))
+            .or(Some(false))
+            .unwrap();
+        let splitable = mm_attributes.get("atpSplitable").is_some();
+        data.group_attributes.insert(
+            typeref.to_owned(),
+            XsdGroupAttributes {
+                ordered,
+                splitable,
+            },
+        );
         Ok(XsdElement {
             name: attr_name.to_owned(),
             typeref: typeref.to_owned(),
@@ -281,7 +316,7 @@ fn parse_element(
         while let Some((local_name, elem_attributes)) = get_next_element(parser, "element")? {
             match local_name.as_ref() {
                 "annotation" => {
-                    skip_annotation(parser)?;
+                    mm_attributes = parse_mm_attributes_from_annotation(parser)?;
                 }
                 "simpleType" => {
                     typeref_opt = Some(parse_simple_type(parser, data, &elem_attributes)?);
@@ -305,6 +340,19 @@ fn parse_element(
         }
 
         if let Some(typeref) = typeref_opt {
+            let ordered = mm_attributes
+                .get("pureMM.isOrdered")
+                .and_then(|val| Some(val == "true"))
+                .or(Some(false))
+                .unwrap();
+            let splitable = mm_attributes.get("atpSplitable").is_some();
+            data.group_attributes.insert(
+                typeref.to_owned(),
+                XsdGroupAttributes {
+                    ordered,
+                    splitable,
+                },
+            );
             Ok(XsdElement {
                 name: attr_name.to_owned(),
                 typeref,
@@ -912,6 +960,53 @@ fn skip_annotation(parser: &mut EventReader<BufReader<File>>) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+fn parse_mm_attributes_from_annotation(
+    parser: &mut EventReader<BufReader<File>>,
+) -> Result<HashMap<String, String>, String> {
+    let mut tagmap = HashMap::<String, String>::new();
+    while let Some((local_name, elem_attributes)) = get_next_element(parser, "annotation")? {
+        match local_name.as_ref() {
+            "documentation" => {
+                get_next_element(parser, "documentation")?;
+            }
+            "appinfo" => {
+                let source =
+                    get_required_attribute_value("source", &elem_attributes, &parser.position())?;
+                if let XmlEvent::Characters(text) = get_next_event(parser)? {
+                    if source == "tags" {
+                        let separated_tags: Vec<&str> = text.split(';').collect();
+                        for tag in separated_tags {
+                            let taglen = tag.len();
+                            let equalspos = tag
+                                .find('=')
+                                .ok_or("missing '=' in element tag".to_string())?;
+                            let tagname = tag[0..equalspos].to_string();
+                            let tagval = tag[equalspos + 2..taglen - 1].to_string();
+                            tagmap.insert(tagname, tagval);
+                        }
+                    } else if source == "stereotypes" {
+                        if text == "atpSplitable" {
+                            tagmap.insert("atpSplitable".to_string(), "true".to_string());
+                        }
+                    }
+                } else {
+                    return Err("Error: expected characters inside <appinfo>".to_string());
+                }
+                get_next_element(parser, "appinfo")?;
+            }
+            _ => {
+                return Err(format!(
+                    "Error: found unexpected start of element tag \"{}\" at {}",
+                    local_name,
+                    parser.position()
+                ));
+            }
+        }
+    }
+
+    Ok(tagmap)
 }
 
 fn get_element_end_tag(parser: &mut EventReader<BufReader<File>>, tag: &str) -> Result<(), String> {
