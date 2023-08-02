@@ -110,13 +110,13 @@ fn merge_elem_types(
                 element_collection,
                 attributes,
                 ordered,
-                splitable,
+                splittable,
             },
             ElementDataType::Elements {
                 element_collection: elem_collection_new,
                 attributes: attributes_new,
                 ordered: ordered_new,
-                splitable: splitable_new,
+                splittable: splitable_new,
             },
         ) => {
             result.append(&mut merge_element_collection(
@@ -131,7 +131,7 @@ fn merge_elem_types(
             if *ordered_new {
                 *ordered = true;
             }
-            *splitable = *splitable | *splitable_new;
+            *splittable = *splittable | *splitable_new;
         }
         (
             ElementDataType::Characters {

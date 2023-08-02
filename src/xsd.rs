@@ -80,7 +80,7 @@ pub(crate) struct XsdGroup {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct XsdGroupAttributes {
     pub(crate) ordered: bool,
-    pub(crate) splitable: bool,
+    pub(crate) splittable: bool,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -294,12 +294,12 @@ fn parse_element(
             .and_then(|val| Some(val == "true"))
             .or(Some(false))
             .unwrap();
-        let splitable = mm_attributes.get("atpSplitable").is_some();
+        let splittable = mm_attributes.get("atpSplitable").is_some();
         data.group_attributes.insert(
             typeref.to_owned(),
             XsdGroupAttributes {
                 ordered,
-                splitable,
+                splittable,
             },
         );
         Ok(XsdElement {
@@ -345,12 +345,12 @@ fn parse_element(
                 .and_then(|val| Some(val == "true"))
                 .or(Some(false))
                 .unwrap();
-            let splitable = mm_attributes.get("atpSplitable").is_some();
+            let splittable = mm_attributes.get("atpSplitable").is_some();
             data.group_attributes.insert(
                 typeref.to_owned(),
                 XsdGroupAttributes {
                     ordered,
-                    splitable,
+                    splittable,
                 },
             );
             Ok(XsdElement {

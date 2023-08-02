@@ -64,7 +64,7 @@ pub(crate) enum ElementDataType {
         element_collection: ElementCollection,
         attributes: Vec<Attribute>,
         ordered: bool,
-        splitable: usize,
+        splittable: usize,
     },
     Characters {
         attributes: Vec<Attribute>,

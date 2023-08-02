@@ -646,7 +646,7 @@ fn generate_element_types(
     for (idx, etypename) in elemtypenames.iter().enumerate() {
         let elemtype = autosar_schema.element_types.get(*etypename).unwrap();
         let mode = calc_element_mode(elemtype);
-        let (ordered, splitable) = get_element_attributes(elemtype);
+        let (ordered, splittable) = get_element_attributes(elemtype);
 
         let (subelem_limit_low, subelem_limit_high) =
             subelements_index_info.get(*etypename).unwrap();
@@ -670,7 +670,7 @@ fn generate_element_types(
             "    /* {idx:4} */ ElementSpec {{sub_elements: ({subelem_limit_low}, {subelem_limit_high}), \
                             sub_element_ver: {subelement_ver_info_low}, \
                             attributes: ({attrs_limit_low}, {attrs_limit_high}), attributes_ver: {attrs_ver_info_low}, \
-                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splitable: {splitable}}}, // {infostring}"
+                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splittable: {splittable}}}, // {infostring}"
         )
         .unwrap();
     }
@@ -784,8 +784,8 @@ fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
 fn get_element_attributes(elemtype: &ElementDataType) -> (bool, usize) {
     match elemtype {
         ElementDataType::Elements {
-            ordered, splitable, ..
-        } => (*ordered, *splitable),
+            ordered, splittable, ..
+        } => (*ordered, *splittable),
         ElementDataType::ElementsGroup { .. } => (false, 0),
         ElementDataType::Characters { .. } => (true, 0),
         ElementDataType::Mixed { .. } => (true, 0),

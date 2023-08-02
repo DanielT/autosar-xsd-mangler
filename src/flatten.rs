@@ -148,12 +148,12 @@ fn flatten_complex_type<'a>(
     complex_type_name: &str,
 ) -> Result<ElementDataType, String> {
     let attributes = build_attribute_list(data, &Vec::new(), &complex_type.attribute_groups)?;
-    let (ordered, splitable) = if let Some(XsdGroupAttributes { ordered, splitable }) = data.group_attributes.get(complex_type_name) {
-        (*ordered, *splitable)
+    let (ordered, splittable) = if let Some(XsdGroupAttributes { ordered, splittable }) = data.group_attributes.get(complex_type_name) {
+        (*ordered, *splittable)
     } else {
         (false, false)
     };
-    let splitable_ver = if splitable {
+    let splitable_ver = if splittable {
         data.version_info
     } else {
         0
@@ -169,7 +169,7 @@ fn flatten_complex_type<'a>(
                     element_collection: elements,
                     attributes,
                     ordered,
-                    splitable: splitable_ver,
+                    splittable: splitable_ver,
                 })
             } else {
                 Err(format!(
@@ -198,7 +198,7 @@ fn flatten_complex_type<'a>(
                     element_collection: elements,
                     attributes,
                     ordered,
-                    splitable: splitable_ver,
+                    splittable: splitable_ver,
                 })
             }
         }
@@ -208,7 +208,7 @@ fn flatten_complex_type<'a>(
                 element_collection: elements,
                 attributes,
                 ordered,
-                splitable: splitable_ver,
+                splittable: splitable_ver,
         })
         }
         XsdComplexTypeItem::None => Err("Error: empty complexType".to_string()),
