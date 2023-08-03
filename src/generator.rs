@@ -97,14 +97,14 @@ impl AutosarVersion {{
     /// Human readable description of the Autosar version
     ///
     /// This is particularly useful for the later versions, where the xsd files are just sequentially numbered.
-    /// For example Autosar_00050 -> "AUTOSAR 4.7.0"
+    /// For example Autosar_00050 -> "AUTOSAR R21-11"
     pub fn describe(&self) -> &'static str {{
         match self {{
 {desc_lines}
         }}
     }}
 
-    /// AutosarVersion::LATEST is an alias of whichever is the latest version, currently Autosar_00050
+    /// AutosarVersion::LATEST is an alias of whichever is the latest version, currently Autosar_00051
     pub const LATEST: AutosarVersion = AutosarVersion::{lastident};
 }}
 
@@ -145,13 +145,17 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         .unwrap()
         .insert("AR:AUTOSAR".to_string());
 
+    // for each element data type in the schema
     for artype in autosar_schema.element_types.values() {
         if let Some(element_collection) = artype.collection() {
             for ec_item in element_collection.items() {
+                // for each sub-element of the current element type (skipping groups)
                 if let ElementCollectionItem::Element(elem) = ec_item {
                     if element_names.get(&elem.name).is_none() {
                         element_names.insert(elem.name.to_owned(), HashSet::new());
                     }
+                    // store the name of the sub-element and which element type it uses
+                    // there can be multiple types per name, because names have different meanings in different contexts
                     element_names
                         .get_mut(&elem.name)
                         .unwrap()
@@ -166,6 +170,7 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         }
     }
 
+    // collect all enum values in use by any character data type
     for artype in autosar_schema.character_types.values() {
         if let CharacterDataType::Enum(enumdef) = &artype {
             for (itemname, _) in &enumdef.enumitems {
@@ -613,6 +618,39 @@ fn generate_element_types(
     let mut chartypenames: Vec<&String> = autosar_schema.character_types.keys().collect();
     chartypenames.sort();
 
+    // collect the enum items of DEST attributes
+    let ref_attribute_types: HashSet<String> = autosar_schema
+        .element_types
+        .iter() // iterate over all element types
+        .filter_map(|(_, et)| {
+            // filtering to get only those which have a DEST attribute
+            et.attributes()
+                .map(|attrlist| {
+                    attrlist
+                        .iter()
+                        .find(|attr| attr.name == "DEST")
+                        .map(|attr| &attr.attribute_type) // map to provide only the attribute_type string
+                })
+                .flatten() // Option<Option<attr type name>> -> Option<attr type name>
+                .and_then(|attrtype| {
+                    // with the attribute type string, get the CharacterDataType of the attribute from the schema
+                    autosar_schema
+                        .character_types
+                        .get(attrtype)
+                        .and_then(|ctype| {
+                            // extract the enum items array from the CharacterDataType
+                            if let CharacterDataType::Enum(items) = ctype {
+                                Some(&items.enumitems)
+                            } else {
+                                None
+                            }
+                        })
+                })
+        })
+        .flatten() // flatten the two-level iterator
+        .map(|(name, _)| name.to_owned())
+        .collect();
+
     // map each element type name to an index
     let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
         .iter()
@@ -665,12 +703,27 @@ fn generate_element_types(
         } else {
             "(sub-group)".to_owned()
         };
+        let refstring = if let Some(xsd_typenames) = elemtype.xsd_typenames() {
+            let mut namevec: Vec<String> = xsd_typenames
+                .iter()
+                .filter_map(|xtn| {
+                    ref_attribute_types
+                        .get(xtn)
+                        .and_then(|name| Some(format!("EnumItem::{}", name_to_identifier(name))))
+                })
+                .collect();
+            namevec.sort();
+            namevec.join(", ")
+        } else {
+            "".to_string()
+        };
+
         writeln!(
             elemtypes,
             "    /* {idx:4} */ ElementSpec {{sub_elements: ({subelem_limit_low}, {subelem_limit_high}), \
                             sub_element_ver: {subelement_ver_info_low}, \
                             attributes: ({attrs_limit_low}, {attrs_limit_high}), attributes_ver: {attrs_ver_info_low}, \
-                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splittable: {splittable}}}, // {infostring}"
+                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splittable: {splittable}, ref_by: &[{refstring}]}}, // {infostring}"
         )
         .unwrap();
     }
@@ -784,7 +837,9 @@ fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
 fn get_element_attributes(elemtype: &ElementDataType) -> (bool, usize) {
     match elemtype {
         ElementDataType::Elements {
-            ordered, splittable, ..
+            ordered,
+            splittable,
+            ..
         } => (*ordered, *splittable),
         ElementDataType::ElementsGroup { .. } => (false, 0),
         ElementDataType::Characters { .. } => (true, 0),

@@ -170,6 +170,7 @@ fn flatten_complex_type<'a>(
                     attributes,
                     ordered,
                     splittable: splitable_ver,
+                    xsd_typenames: HashSet::default(),
                 })
             } else {
                 Err(format!(
@@ -199,16 +200,39 @@ fn flatten_complex_type<'a>(
                     attributes,
                     ordered,
                     splittable: splitable_ver,
+                    xsd_typenames: HashSet::default(),
                 })
             }
         }
         XsdComplexTypeItem::Sequence(sequence) => {
+            /* collect the name of the complex type and the names of all the groups in the sequence
+             * In the meta model each of the groups gan originate from an abstract base type.
+             * Any of these might be the correct name to use in the DEST attribute of a eference */
+            let mut xsd_typenames = HashSet::new();
+            xsd_typenames.insert(strip_ar_prefix(complex_type_name));
+            for item in &sequence.items {
+                if let XsdModelGroupItem::Group(groupname) = item {
+                    xsd_typenames.insert(strip_ar_prefix(groupname));
+                }
+            }
+            if !xsd_typenames.contains("REFERRABLE") {
+                // if it's not referrable, then the remaining info is meaningless
+                xsd_typenames = HashSet::new();
+            } else {
+                // remove generic base types which are never relevant
+                xsd_typenames.remove("AR-OBJECT");
+                xsd_typenames.remove("REFERRABLE");
+                xsd_typenames.remove("IDENTIFIABLE");
+                xsd_typenames.remove("MULTILANGUAGE-REFERRABLE");
+            }
+            /* flatten the sequence into an element type */
             let elements = flatten_sequence(data, sequence)?;
             Ok(ElementDataType::Elements {
                 element_collection: elements,
                 attributes,
                 ordered,
                 splittable: splitable_ver,
+                xsd_typenames,
         })
         }
         XsdComplexTypeItem::None => Err("Error: empty complexType".to_string()),
@@ -632,5 +656,13 @@ impl Element {
             amount: occurs_to_amount(xsd_element.min_occurs, xsd_element.max_occurs),
             version_info,
         }
+    }
+}
+
+fn strip_ar_prefix(typename: &str) -> String {
+    if typename.starts_with("AR:") {
+        typename.strip_prefix("AR:").unwrap().to_string()
+    } else {
+        typename.to_string()
     }
 }

@@ -111,12 +111,14 @@ fn merge_elem_types(
                 attributes,
                 ordered,
                 splittable,
+                xsd_typenames,
             },
             ElementDataType::Elements {
                 element_collection: elem_collection_new,
                 attributes: attributes_new,
                 ordered: ordered_new,
                 splittable: splitable_new,
+                xsd_typenames: xsd_typenames_new,
             },
         ) => {
             result.append(&mut merge_element_collection(
@@ -132,6 +134,10 @@ fn merge_elem_types(
                 *ordered = true;
             }
             *splittable = *splittable | *splitable_new;
+            for xtn in xsd_typenames_new {
+                // most of these are duplicates, but that doesn't matter
+                xsd_typenames.insert(xtn.to_owned());
+            }
         }
         (
             ElementDataType::Characters {

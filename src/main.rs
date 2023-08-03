@@ -1,4 +1,5 @@
 use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs::File;
 use std::path::Path;
@@ -65,6 +66,7 @@ pub(crate) enum ElementDataType {
         attributes: Vec<Attribute>,
         ordered: bool,
         splittable: usize,
+        xsd_typenames: HashSet<String>,
     },
     Characters {
         attributes: Vec<Attribute>,
@@ -429,6 +431,14 @@ impl ElementDataType {
             | ElementDataType::Characters { attributes, .. }
             | ElementDataType::Mixed { attributes, .. } => Some(attributes),
             ElementDataType::ElementsGroup { .. } => None,
+        }
+    }
+
+    fn xsd_typenames(&self) -> Option<&HashSet<String>> {
+        if let ElementDataType::Elements { xsd_typenames, .. } = self {
+            Some(xsd_typenames)
+        } else {
+            None
         }
     }
 
