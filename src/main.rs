@@ -254,6 +254,11 @@ fn core() -> Result<(), String> {
     dedup_types(&mut autosar_schema);
     sanity_check(&autosar_schema);
 
+    // pre-gen fixup: make the AUTOSAR element splittable, even though that is not in the specification
+    if let Some(ElementDataType::Elements { splittable, .. }) = autosar_schema.element_types.get_mut("AR:AUTOSAR") {
+        *splittable = u32::MAX as usize;
+    }
+
     generator::generate(&XSD_CONFIG, &autosar_schema)?;
 
     Ok(())
