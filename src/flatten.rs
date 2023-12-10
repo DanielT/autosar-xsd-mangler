@@ -1,6 +1,14 @@
-use super::xsd::*;
-use super::*;
+use super::xsd::{
+    Xsd, XsdAttribute, XsdChoice, XsdComplexType, XsdComplexTypeItem, XsdElement, XsdGroup,
+    XsdGroupItem, XsdModelGroupItem, XsdRestriction, XsdSequence, XsdSimpleContent, XsdSimpleType,
+    XsdType,
+};
+use super::{
+    Attribute, AutosarDataTypes, CharacterDataType, Element, ElementAmount, ElementCollection,
+    ElementCollectionItem, ElementDataType, EnumDefinition, HashSet,
+};
 
+#[derive(Debug)]
 enum WorkQueueItem {
     ElementType(String),
     CharacterType(String),
@@ -33,7 +41,8 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                     if let Some(XsdType::Complex(complex_type)) =
                         data.types.get(&cur_element_typeref)
                     {
-                        let elemtype = flatten_complex_type(data, complex_type, &cur_element_typeref)?;
+                        let elemtype =
+                            flatten_complex_type(data, complex_type, &cur_element_typeref)?;
 
                         enqueue_dependencies(&mut work_queue, &elemtype);
                         autosar_schema
@@ -63,7 +72,7 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                             .character_types
                             .insert(cur_char_typeref, chartype);
                     } else {
-                        return Err(format!("Error: unresolvable type {}", cur_char_typeref));
+                        return Err(format!("Error: unresolvable type {cur_char_typeref}"));
                     }
                 }
             }
@@ -72,21 +81,13 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                     .element_types
                     .get(&cur_group_typeref)
                     .is_none()
+                    && data.groups.get(&cur_group_typeref).is_some()
                 {
-                    let trlen = cur_group_typeref.len();
-                    if cur_group_typeref.ends_with("-ELEMENTGROUP")
-                        && data.groups.get(&cur_group_typeref[0..trlen - 13]).is_some()
-                    {
-                        let xsd_group = data.groups.get(&cur_group_typeref[0..trlen - 13]).unwrap();
-                        let group_elements = ElementDataType::ElementsGroup {
-                            element_collection: flatten_group(data, xsd_group)?,
-                        };
+                    let xsd_group = data.groups.get(&cur_group_typeref).unwrap();
+                    let group = flatten_group(data, xsd_group)?;
 
-                        enqueue_dependencies(&mut work_queue, &group_elements);
-                        autosar_schema
-                            .element_types
-                            .insert(cur_group_typeref, group_elements);
-                    }
+                    enqueue_group_dependencies(&mut work_queue, &group);
+                    autosar_schema.group_types.insert(cur_group_typeref, group);
                 }
             }
         }
@@ -98,19 +99,19 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
     {
         attributes.push(Attribute {
             name: "xmlns".to_string(),
-            attribute_type: "xsd:string".to_string(),
+            attr_type: "xsd:string".to_string(),
             required: true,
             version_info: data.version_info,
         });
         attributes.push(Attribute {
             name: "xmlns:xsi".to_string(),
-            attribute_type: "xsd:string".to_string(),
+            attr_type: "xsd:string".to_string(),
             required: true,
             version_info: data.version_info,
         });
         attributes.push(Attribute {
             name: "xsi:schemaLocation".to_string(),
-            attribute_type: "xsd:string".to_string(),
+            attr_type: "xsd:string".to_string(),
             required: true,
             version_info: data.version_info,
         });
@@ -120,25 +121,27 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
 }
 
 fn enqueue_dependencies(work_queue: &mut Vec<WorkQueueItem>, elemtype: &ElementDataType) {
-    if let Some(element_collection) = elemtype.collection() {
-        for item in element_collection.items() {
-            match item {
-                ElementCollectionItem::Element(Element { typeref, .. }) => {
-                    work_queue.push(WorkQueueItem::ElementType(typeref.clone()));
-                }
-                ElementCollectionItem::GroupRef(typeref) => {
-                    work_queue.push(WorkQueueItem::Group(typeref.clone()));
-                }
-            }
-        }
+    if let Some(group_ref) = elemtype.group_ref() {
+        work_queue.push(WorkQueueItem::Group(group_ref.clone()));
     }
-    if let Some(attributes) = elemtype.attributes() {
-        for attr in attributes {
-            work_queue.push(WorkQueueItem::CharacterType(attr.attribute_type.clone()));
-        }
+    for attribute in elemtype.attributes() {
+        work_queue.push(WorkQueueItem::CharacterType(attribute.attr_type.clone()));
     }
     if let Some(basetype) = elemtype.basetype() {
         work_queue.push(WorkQueueItem::CharacterType(basetype.to_string()));
+    }
+}
+
+fn enqueue_group_dependencies(work_queue: &mut Vec<WorkQueueItem>, group: &ElementCollection) {
+    for item in group.items() {
+        match item {
+            ElementCollectionItem::Element(Element { typeref, .. }) => {
+                work_queue.push(WorkQueueItem::ElementType(typeref.clone()));
+            }
+            ElementCollectionItem::GroupRef(typeref) => {
+                work_queue.push(WorkQueueItem::Group(typeref.clone()));
+            }
+        }
     }
 }
 
@@ -148,92 +151,69 @@ fn flatten_complex_type<'a>(
     complex_type_name: &str,
 ) -> Result<ElementDataType, String> {
     let attributes = build_attribute_list(data, &Vec::new(), &complex_type.attribute_groups)?;
-    let (ordered, splittable) = if let Some(XsdGroupAttributes { ordered, splittable }) = data.group_attributes.get(complex_type_name) {
-        (*ordered, *splittable)
-    } else {
-        (false, false)
-    };
-    let splitable_ver = if splittable {
-        data.version_info
-    } else {
-        0
-    };
+
     match &complex_type.item {
         XsdComplexTypeItem::SimpleContent(simple_content) => {
             flatten_simple_content(data, simple_content)
         }
         XsdComplexTypeItem::Group(group_ref) => {
             if let Some(group) = data.groups.get(group_ref) {
-                let elements = flatten_group(data, group)?;
-                Ok(ElementDataType::Elements {
-                    element_collection: elements,
-                    attributes,
-                    ordered,
-                    splittable: splitable_ver,
-                    xsd_typenames: HashSet::default(),
-                })
+                let mut xsd_typenames = HashSet::new();
+                // let elements = flatten_group(data, group)?;
+                match &group.item {
+                    XsdGroupItem::Sequence(sequence) => {
+                        /* collect the name of the complex type and the names of all the groups in the sequence
+                         * In the meta model each of the groups gan originate from an abstract base type.
+                         * Any of these might be the correct name to use in the DEST attribute of a reference */
+                        xsd_typenames.insert(strip_ar_prefix(complex_type_name));
+                        for item in &sequence.items {
+                            if let XsdModelGroupItem::Group(groupname) = item {
+                                xsd_typenames.insert(strip_ar_prefix(groupname));
+                            }
+                        }
+                        if !xsd_typenames.contains("REFERRABLE") {
+                            // if it's not referrable, then the remaining info is meaningless
+                            xsd_typenames = HashSet::new();
+                        } else {
+                            // remove generic base types which are never relevant
+                            xsd_typenames.remove("AR-OBJECT");
+                            xsd_typenames.remove("REFERRABLE");
+                            xsd_typenames.remove("IDENTIFIABLE");
+                            xsd_typenames.remove("MULTILANGUAGE-REFERRABLE");
+                        }
+
+                        Ok(ElementDataType::Elements {
+                            group_ref: group_ref.clone(),
+                            attributes,
+                            xsd_typenames,
+                        })
+                    }
+                    XsdGroupItem::Choice(_) => {
+                        if complex_type.mixed_content {
+                            Ok(ElementDataType::Mixed {
+                                group_ref: group_ref.clone(),
+                                attributes,
+                                basetype: "xsd:string".to_string(),
+                            })
+                        } else {
+                            Ok(ElementDataType::Elements {
+                                group_ref: group_ref.clone(),
+                                attributes,
+                                xsd_typenames: HashSet::default(),
+                            })
+                        }
+                    }
+                    XsdGroupItem::None => Err(format!(
+                        "Error: reference to empty group {} found in complexType {}",
+                        group_ref, complex_type.name
+                    )),
+                }
             } else {
                 Err(format!(
                     "Error: unknown group ref {} found in complexType {}",
                     group_ref, complex_type.name
                 ))
             }
-        }
-        XsdComplexTypeItem::Choice(choice) => {
-            let elements = flatten_choice(data, choice)?;
-            if complex_type.mixed_content {
-                if elements.items().is_empty() {
-                    Ok(ElementDataType::Characters {
-                        basetype: "xsd:string".to_string(),
-                        attributes,
-                    })
-                } else {
-                    Ok(ElementDataType::Mixed {
-                        element_collection: elements,
-                        attributes,
-                        basetype: "xsd:string".to_string(),
-                    })
-                }
-            } else {
-                Ok(ElementDataType::Elements {
-                    element_collection: elements,
-                    attributes,
-                    ordered,
-                    splittable: splitable_ver,
-                    xsd_typenames: HashSet::default(),
-                })
-            }
-        }
-        XsdComplexTypeItem::Sequence(sequence) => {
-            /* collect the name of the complex type and the names of all the groups in the sequence
-             * In the meta model each of the groups gan originate from an abstract base type.
-             * Any of these might be the correct name to use in the DEST attribute of a eference */
-            let mut xsd_typenames = HashSet::new();
-            xsd_typenames.insert(strip_ar_prefix(complex_type_name));
-            for item in &sequence.items {
-                if let XsdModelGroupItem::Group(groupname) = item {
-                    xsd_typenames.insert(strip_ar_prefix(groupname));
-                }
-            }
-            if !xsd_typenames.contains("REFERRABLE") {
-                // if it's not referrable, then the remaining info is meaningless
-                xsd_typenames = HashSet::new();
-            } else {
-                // remove generic base types which are never relevant
-                xsd_typenames.remove("AR-OBJECT");
-                xsd_typenames.remove("REFERRABLE");
-                xsd_typenames.remove("IDENTIFIABLE");
-                xsd_typenames.remove("MULTILANGUAGE-REFERRABLE");
-            }
-            /* flatten the sequence into an element type */
-            let elements = flatten_sequence(data, sequence)?;
-            Ok(ElementDataType::Elements {
-                element_collection: elements,
-                attributes,
-                ordered,
-                splittable: splitable_ver,
-                xsd_typenames,
-        })
         }
         XsdComplexTypeItem::None => Err("Error: empty complexType".to_string()),
     }
@@ -259,7 +239,8 @@ fn flatten_simple_content(
                 basetype: simple_content.extension.basetype.clone(),
             }),
             XsdType::Complex(complex_type) => {
-                let mut complex_type = flatten_complex_type(data, complex_type, &simple_content.extension.basetype)?;
+                let mut complex_type =
+                    flatten_complex_type(data, complex_type, &simple_content.extension.basetype)?;
                 // append the attributes attached to the <extension> to the attributes gathered inside the <complexType>
                 match &mut complex_type {
                     ElementDataType::Elements {
@@ -296,7 +277,7 @@ fn flatten_group(data: &Xsd, group: &XsdGroup) -> Result<ElementCollection, Stri
 fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCollection, String> {
     let mut elements: Vec<ElementCollectionItem> = Vec::new();
     let mut outer_amount = occurs_to_amount(choice.min_occurs, choice.max_occurs);
-    let mut name = "".to_string();
+    let mut name = String::new();
     let mut replacement = None;
 
     for item in &choice.items {
@@ -345,7 +326,7 @@ fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCol
                                 });
                             } else if !sub_elements.is_empty() {
                                 elements.push(ElementCollectionItem::GroupRef(format!(
-                                    "AR:{inner_name}-ELEMENTGROUP"
+                                    "AR:{inner_name}"
                                 )));
                             } else {
                                 todo!()
@@ -354,8 +335,7 @@ fn flatten_choice<'a>(data: &'a Xsd, choice: &'a XsdChoice) -> Result<ElementCol
                     }
                 } else {
                     return Err(format!(
-                        "Error: unknown group ref {} found in sequence",
-                        group_ref
+                        "Error: unknown group ref {group_ref} found in sequence"
                     ));
                 }
             }
@@ -434,8 +414,7 @@ fn flatten_sequence<'a>(
                     flat_items.push(flatten_group(data, group)?);
                 } else {
                     return Err(format!(
-                        "Error: unknown group ref {} found in sequence",
-                        group_ref
+                        "Error: unknown group ref {group_ref} found in sequence"
                     ));
                 }
             }
@@ -444,7 +423,7 @@ fn flatten_sequence<'a>(
             }
             XsdModelGroupItem::Element(xsd_element) => {
                 flat_items.push(ElementCollection::Sequence {
-                    name: "".to_string(),
+                    name: String::new(),
                     sub_elements: vec![ElementCollectionItem::Element(Element::new(
                         xsd_element,
                         data.version_info,
@@ -494,14 +473,10 @@ fn flatten_sequence<'a>(
                             });
                         } else if let XsdModelGroupItem::Group(group_ref) = &sequence.items[idx] {
                             // the choice came from a group, we'll only keep a reference to that group here
-                            elements.push(ElementCollectionItem::GroupRef(format!(
-                                "{group_ref}-ELEMENTGROUP"
-                            )));
+                            elements.push(ElementCollectionItem::GroupRef(group_ref.clone()));
                         } else if data.groups.get(&format!("AR:{name}")).is_some() {
                             // the choice came from a group, we'll only keep a reference to that group here
-                            elements.push(ElementCollectionItem::GroupRef(format!(
-                                "AR:{name}-ELEMENTGROUP"
-                            )));
+                            elements.push(ElementCollectionItem::GroupRef(format!("AR:{name}")));
                         } else {
                             todo!()
                         }
@@ -520,7 +495,7 @@ fn flatten_sequence<'a>(
     } else {
         Ok(ElementCollection::Sequence {
             sub_elements: elements,
-            name: "".to_string(),
+            name: String::new(),
         })
     }
 }
@@ -538,17 +513,9 @@ fn flatten_simple_type(
             })
         }
         XsdSimpleType::Restriction(XsdRestriction::Plain { basetype }) => match &**basetype {
-            "xsd:string" => Ok(CharacterDataType::String {
-                max_length: None,
-                preserve_whitespace: false,
-            }),
             "xsd:double" => Ok(CharacterDataType::Double),
             "xsd:unsignedInt" => Ok(CharacterDataType::UnsignedInteger),
-            "xsd:NMTOKEN" => Ok(CharacterDataType::String {
-                max_length: None,
-                preserve_whitespace: false,
-            }),
-            "xsd:NMTOKENS" => Ok(CharacterDataType::String {
+            "xsd:string" | "xsd:NMTOKEN" | "xsd:NMTOKENS" => Ok(CharacterDataType::String {
                 max_length: None,
                 preserve_whitespace: false,
             }),
@@ -583,15 +550,13 @@ fn build_attribute_list(
     }
 
     for attr_group_name in xsd_attribute_groups {
-        if attr_group_name == "AR:WHITESPACE-CONTROLLED" {}
         if let Some(attr_group) = data.attribute_groups.get(attr_group_name) {
             for attr in &attr_group.attributes {
                 attributes.push(build_attribute(data, attr)?);
             }
         } else {
             return Err(format!(
-                "Error: attribute group {} is referenced but not found",
-                attr_group_name
+                "Error: attribute group {attr_group_name} is referenced but not found"
             ));
         }
     }
@@ -600,7 +565,7 @@ fn build_attribute_list(
 }
 
 fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String> {
-    let attribute_type = if let Some(attr_type) = data.types.get(&attr.typeref) {
+    let attr_type = if let Some(attr_type) = data.types.get(&attr.typeref) {
         match attr_type {
             XsdType::Base(_) | XsdType::Simple(_) => attr.typeref.clone(),
             XsdType::Complex(_) => {
@@ -616,7 +581,7 @@ fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String>
 
     Ok(Attribute {
         name: attr.name.clone(),
-        attribute_type,
+        attr_type,
         required: attr.required,
         version_info: data.version_info,
     })
@@ -624,17 +589,16 @@ fn build_attribute(data: &Xsd, attr: &XsdAttribute) -> Result<Attribute, String>
 
 pub(crate) fn combine_amounts(amount_1: ElementAmount, amount_2: ElementAmount) -> ElementAmount {
     match (amount_1, amount_2) {
-        (ElementAmount::ZeroOrOne, ElementAmount::ZeroOrOne)
-        | (ElementAmount::ZeroOrOne, ElementAmount::One)
-        | (ElementAmount::One, ElementAmount::ZeroOrOne) => ElementAmount::ZeroOrOne,
+        (ElementAmount::ZeroOrOne | ElementAmount::One, ElementAmount::ZeroOrOne)
+        | (ElementAmount::ZeroOrOne, ElementAmount::One) => ElementAmount::ZeroOrOne,
 
         (ElementAmount::One, ElementAmount::One) => ElementAmount::One,
 
-        (ElementAmount::ZeroOrOne, ElementAmount::Any)
-        | (ElementAmount::One, ElementAmount::Any)
-        | (ElementAmount::Any, ElementAmount::ZeroOrOne)
-        | (ElementAmount::Any, ElementAmount::One)
-        | (ElementAmount::Any, ElementAmount::Any) => ElementAmount::Any,
+        (
+            ElementAmount::ZeroOrOne | ElementAmount::One | ElementAmount::Any,
+            ElementAmount::Any,
+        )
+        | (ElementAmount::Any, ElementAmount::ZeroOrOne | ElementAmount::One) => ElementAmount::Any,
     }
 }
 
@@ -651,10 +615,14 @@ fn occurs_to_amount(min_occurs: usize, max_occurs: usize) -> ElementAmount {
 impl Element {
     fn new(xsd_element: &XsdElement, version_info: usize) -> Self {
         Self {
-            name: xsd_element.name.to_owned(),
-            typeref: xsd_element.typeref.to_owned(),
+            name: xsd_element.name.clone(),
+            typeref: xsd_element.typeref.clone(),
             amount: occurs_to_amount(xsd_element.min_occurs, xsd_element.max_occurs),
             version_info,
+            splittable: xsd_element.splittable,
+            ordered: xsd_element.ordered,
+            restrict_std: xsd_element.restrict_std,
+            docstring: xsd_element.doctext.clone(),
         }
     }
 }

@@ -4,7 +4,7 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 
-use xsd::Xsd;
+use xsd::{Xsd, XsdRestrictToStandard};
 
 mod flatten;
 mod generator;
@@ -20,20 +20,24 @@ struct EnumDefinition {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct Attribute {
     pub(crate) name: String,
-    pub(crate) attribute_type: String,
+    pub(crate) attr_type: String,
     pub(crate) required: bool,
     pub(crate) version_info: usize,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct Element {
     pub(crate) name: String,
     pub(crate) typeref: String,
     pub(crate) amount: ElementAmount,
     pub(crate) version_info: usize,
+    pub(crate) splittable: bool,
+    pub(crate) ordered: bool,
+    pub(crate) restrict_std: XsdRestrictToStandard,
+    pub(crate) docstring: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 enum ElementAmount {
     ZeroOrOne,
     One,
@@ -62,10 +66,8 @@ pub(crate) enum ElementCollection {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum ElementDataType {
     Elements {
-        element_collection: ElementCollection,
+        group_ref: String,
         attributes: Vec<Attribute>,
-        ordered: bool,
-        splittable: usize,
         xsd_typenames: HashSet<String>,
     },
     Characters {
@@ -73,12 +75,9 @@ pub(crate) enum ElementDataType {
         basetype: String,
     },
     Mixed {
-        element_collection: ElementCollection,
+        group_ref: String,
         attributes: Vec<Attribute>,
         basetype: String,
-    },
-    ElementsGroup {
-        element_collection: ElementCollection,
     },
 }
 
@@ -101,6 +100,7 @@ pub(crate) enum CharacterDataType {
 pub(crate) struct AutosarDataTypes {
     element_types: FxHashMap<String, ElementDataType>,
     character_types: FxHashMap<String, CharacterDataType>,
+    group_types: FxHashMap<String, ElementCollection>,
 }
 
 pub(crate) struct XsdFileInfo {
@@ -229,7 +229,7 @@ fn core() -> Result<(), String> {
             let file = File::open(filepath).unwrap();
             println!("loading {}", xsd_file_info.name);
             let xsd = Xsd::load(file, 1 << index)?;
-            // println!("\n\n######################\nXSD {friendly_name}:\n{xsd:#?}\n##################\n\n");
+            // println!("\n\n######################\nXSD {}:\n{xsd:#?}\n##################\n\n", xsd_file_info.desc);
             autosar_schema_version.push((xsd_file_info.desc, flatten::flatten_schema(&xsd)?));
         } else {
             println!(
@@ -240,13 +240,13 @@ fn core() -> Result<(), String> {
         }
     }
 
-    let (_base_name, mut autosar_schema) = autosar_schema_version.pop().unwrap();
+    let (base_name, mut autosar_schema) = autosar_schema_version.pop().unwrap();
     //let mut merged = HashMap::new();
     sanity_check(&autosar_schema);
 
-    println!("merge base: {}", _base_name);
-    for (_input_name, xsd) in autosar_schema_version.iter().rev() {
-        println!("merging: {}", _input_name);
+    println!("merge base: {base_name}");
+    for (input_name, xsd) in autosar_schema_version.iter().rev() {
+        println!("merging: {input_name}");
         merge::merge(&mut autosar_schema, xsd)?;
         sanity_check(&autosar_schema);
     }
@@ -254,35 +254,52 @@ fn core() -> Result<(), String> {
     dedup_types(&mut autosar_schema);
     sanity_check(&autosar_schema);
 
-    // pre-gen fixup: make the AUTOSAR element splittable, even though that is not in the specification
-    if let Some(ElementDataType::Elements { splittable, .. }) = autosar_schema.element_types.get_mut("AR:AUTOSAR") {
-        *splittable = u32::MAX as usize;
-    }
-
-    generator::generate(&XSD_CONFIG, &autosar_schema)?;
+    generator::generate(&XSD_CONFIG, &autosar_schema);
 
     Ok(())
 }
 
 fn dedup_types(autosar_types: &mut AutosarDataTypes) {
-    // println!("before dedup: {} element types, {} character types", autosar_types.element_types.len(), autosar_types.character_types.len());
+    // replace repeatedly - types may become identical when types they depend on are deduplicated
     loop {
+        let mut group_typenames = autosar_types
+            .group_types
+            .keys()
+            .cloned()
+            .collect::<Vec<String>>();
+        group_typenames.sort_by(dedup_keycmp);
         let mut elem_typenames = autosar_types
             .element_types
             .keys()
-            .map(|k| k.to_owned())
+            .cloned()
             .collect::<Vec<String>>();
         elem_typenames.sort_by(dedup_keycmp);
         let mut char_typenames = autosar_types
             .character_types
             .keys()
-            .map(|k| k.to_owned())
+            .cloned()
             .collect::<Vec<String>>();
         char_typenames.sort_by(dedup_keycmp);
 
+        let mut group_replacements = FxHashMap::default();
         let mut elem_replacements = FxHashMap::default();
         let mut char_replacements = FxHashMap::default();
 
+        // build a table of group types to replace by another identical type
+        for idx1 in 0..(group_typenames.len() - 1) {
+            let typename1 = &group_typenames[idx1];
+            if group_replacements.get(typename1).is_none() {
+                for typename2 in group_typenames.iter().skip(idx1 + 1) {
+                    if group_replacements.get(typename2).is_none()
+                        && autosar_types.group_types.get(typename1)
+                            == autosar_types.group_types.get(typename2)
+                    {
+                        group_replacements.insert(typename2.to_owned(), typename1.to_owned());
+                    }
+                }
+            }
+        }
+        // build a table of element types to replace by another identical type
         for idx1 in 0..(elem_typenames.len() - 1) {
             let typename1 = &elem_typenames[idx1];
             if elem_replacements.get(typename1).is_none() {
@@ -296,6 +313,7 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
                 }
             }
         }
+        // build a table of character types to replace by another identical type
         for idx1 in 0..(char_typenames.len() - 1) {
             let typename1 = &char_typenames[idx1];
             if char_replacements.get(typename1).is_none() {
@@ -310,44 +328,56 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
             }
         }
 
-        for (_, artype) in autosar_types.element_types.iter_mut() {
-            match artype {
-                ElementDataType::Elements {
-                    element_collection, ..
-                }
-                | ElementDataType::Mixed {
-                    element_collection, ..
-                }
-                | ElementDataType::ElementsGroup { element_collection } => match element_collection
-                {
-                    ElementCollection::Choice { sub_elements, .. }
-                    | ElementCollection::Sequence { sub_elements, .. } => {
-                        for ec_item in sub_elements {
-                            match ec_item {
-                                ElementCollectionItem::Element(Element { typeref, .. })
-                                | ElementCollectionItem::GroupRef(typeref) => {
-                                    if let Some(rep) = elem_replacements.get(typeref) {
-                                        *typeref = rep.to_owned();
-                                    }
+        // perform replacements in each group
+        for group_type in autosar_types.group_types.values_mut() {
+            match group_type {
+                ElementCollection::Choice { sub_elements, .. }
+                | ElementCollection::Sequence { sub_elements, .. } => {
+                    for ec_item in sub_elements {
+                        match ec_item {
+                            ElementCollectionItem::Element(Element {
+                                typeref: element_typeref,
+                                ..
+                            }) => {
+                                if let Some(rep) = elem_replacements.get(element_typeref) {
+                                    *element_typeref = rep.to_owned();
+                                }
+                            }
+                            ElementCollectionItem::GroupRef(group_ref) => {
+                                if let Some(rep) = group_replacements.get(group_ref) {
+                                    *group_ref = rep.to_owned();
                                 }
                             }
                         }
                     }
-                },
+                }
+            }
+        }
+
+        for artype in autosar_types.element_types.values_mut() {
+            // replace group_refs inside an element type
+            match artype {
+                ElementDataType::Elements { group_ref, .. }
+                | ElementDataType::Mixed { group_ref, .. } => {
+                    if let Some(rep) = group_replacements.get(group_ref) {
+                        *group_ref = rep.to_owned();
+                    }
+                }
                 _ => {}
             }
+            // replace character types for attributes
             match artype {
                 ElementDataType::Elements { attributes, .. }
                 | ElementDataType::Characters { attributes, .. }
                 | ElementDataType::Mixed { attributes, .. } => {
                     for attr in attributes {
-                        if let Some(rep) = char_replacements.get(&attr.attribute_type) {
-                            attr.attribute_type = rep.to_owned();
+                        if let Some(rep) = char_replacements.get(&attr.attr_type) {
+                            attr.attr_type = rep.to_owned();
                         }
                     }
                 }
-                _ => {}
             }
+            // replace character data type for character content
             match artype {
                 ElementDataType::Characters { basetype, .. }
                 | ElementDataType::Mixed { basetype, .. } => {
@@ -358,18 +388,27 @@ fn dedup_types(autosar_types: &mut AutosarDataTypes) {
                 _ => {}
             }
         }
+        // remove obsolete group types
+        for name in group_replacements.keys() {
+            autosar_types.group_types.remove(name);
+        }
+        // remove obsolete element types
         for name in elem_replacements.keys() {
             autosar_types.element_types.remove(name);
         }
+        //remove obsolete character data types
         for name in char_replacements.keys() {
             autosar_types.character_types.remove(name);
         }
 
-        if elem_replacements.is_empty() && char_replacements.is_empty() {
+        // done if no replacements werre foud in this iteration
+        if group_replacements.is_empty()
+            && elem_replacements.is_empty()
+            && char_replacements.is_empty()
+        {
             break;
         }
     }
-    // println!("after dedup: {} element types, {} character types", autosar_types.element_types.len(), autosar_types.character_types.len());
 }
 
 fn dedup_keycmp(key1: &String, key2: &String) -> std::cmp::Ordering {
@@ -380,28 +419,27 @@ fn dedup_keycmp(key1: &String, key2: &String) -> std::cmp::Ordering {
 }
 
 fn sanity_check(autosar_types: &AutosarDataTypes) {
-    for (typename, elemcontent) in &autosar_types.element_types {
-        if let Some(element_collection) = elemcontent.collection() {
-            for item in element_collection.items() {
-                if let ElementCollectionItem::Element(elem) = item {
-                    if autosar_types.element_types.get(&elem.typeref).is_none() {
-                        println!("sanity check failed - in type [{typename}] element <{elem:#?}> references non-existent type [{}]", elem.typeref);
-                    }
+    for (groupname, group) in &autosar_types.group_types {
+        for item in group.items() {
+            if let ElementCollectionItem::Element(elem) = item {
+                if autosar_types.element_types.get(&elem.typeref).is_none() {
+                    println!("sanity check failed - in group [{groupname}] element <{elem:#?}> references non-existent type [{}]", elem.typeref);
                 }
             }
         }
-        if let Some(attributes) = elemcontent.attributes() {
-            for attr in attributes {
-                if autosar_types
-                    .character_types
-                    .get(&attr.attribute_type)
-                    .is_none()
-                {
-                    println!(
+    }
+    for (typename, elemcontent) in &autosar_types.element_types {
+        if let Some(group_name) = elemcontent.group_ref() {
+            if autosar_types.group_types.get(&group_name).is_none() {
+                println!("sanity check failed - type [{typename}] references non-existent group [{group_name}]");
+            }
+        }
+        for attr in elemcontent.attributes() {
+            if autosar_types.character_types.get(&attr.attr_type).is_none() {
+                println!(
                         "sanity check failed - in type [{typename}] attribute {} references non-existent type [{}]",
-                        attr.name, attr.attribute_type
+                        attr.name, attr.attr_type
                     );
-                }
             }
         }
     }
@@ -411,31 +449,25 @@ fn main() {
     match core() {
         Ok(()) => {}
         Err(errmsg) => {
-            print!("{}", errmsg);
+            print!("{errmsg}");
         }
     }
 }
 
 impl ElementDataType {
-    fn collection(&self) -> Option<&ElementCollection> {
+    fn group_ref(&self) -> Option<String> {
         match self {
-            ElementDataType::ElementsGroup { element_collection }
-            | ElementDataType::Elements {
-                element_collection, ..
-            }
-            | ElementDataType::Mixed {
-                element_collection, ..
-            } => Some(element_collection),
-            _ => None,
+            ElementDataType::Elements { group_ref, .. }
+            | ElementDataType::Mixed { group_ref, .. } => Some(group_ref.clone()),
+            ElementDataType::Characters { .. } => None,
         }
     }
 
-    fn attributes(&self) -> Option<&Vec<Attribute>> {
+    fn attributes(&self) -> &Vec<Attribute> {
         match self {
             ElementDataType::Elements { attributes, .. }
             | ElementDataType::Characters { attributes, .. }
-            | ElementDataType::Mixed { attributes, .. } => Some(attributes),
-            ElementDataType::ElementsGroup { .. } => None,
+            | ElementDataType::Mixed { attributes, .. } => attributes,
         }
     }
 
@@ -449,8 +481,8 @@ impl ElementDataType {
 
     fn basetype(&self) -> Option<&str> {
         match self {
-            ElementDataType::Characters { basetype, .. } => Some(basetype),
-            ElementDataType::Mixed { basetype, .. } => Some(basetype),
+            ElementDataType::Characters { basetype, .. }
+            | ElementDataType::Mixed { basetype, .. } => Some(basetype),
             _ => None,
         }
     }
@@ -459,8 +491,8 @@ impl ElementDataType {
 impl ElementCollection {
     fn items(&self) -> &Vec<ElementCollectionItem> {
         match self {
-            ElementCollection::Choice { sub_elements, .. } => sub_elements,
-            ElementCollection::Sequence { sub_elements, .. } => sub_elements,
+            ElementCollection::Choice { sub_elements, .. }
+            | ElementCollection::Sequence { sub_elements, .. } => sub_elements,
         }
     }
 }
@@ -468,8 +500,8 @@ impl ElementCollection {
 impl ElementCollectionItem {
     fn name(&self) -> &str {
         match self {
-            ElementCollectionItem::Element(Element { name, .. }) => name,
-            ElementCollectionItem::GroupRef(name) => name,
+            ElementCollectionItem::Element(Element { name, .. })
+            | ElementCollectionItem::GroupRef(name) => name,
         }
     }
 }
@@ -479,6 +511,7 @@ impl AutosarDataTypes {
         let mut adt = Self {
             character_types: FxHashMap::default(),
             element_types: FxHashMap::default(),
+            group_types: FxHashMap::default(),
         };
 
         adt.character_types.insert(

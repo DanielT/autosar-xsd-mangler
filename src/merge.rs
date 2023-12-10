@@ -1,9 +1,19 @@
 use std::collections::HashSet;
 
-use super::*;
+use super::{
+    Attribute, AutosarDataTypes, CharacterDataType, Element, ElementCollection,
+    ElementCollectionItem, ElementDataType, EnumDefinition, FxHashMap,
+};
 
+#[derive(Debug, Eq, PartialEq, Hash)]
+enum ElemOrGroup {
+    Element(String, String),
+    Group(String, String),
+}
+
+#[derive(Debug)]
 struct MergeItems {
-    elem_types: Vec<(String, String)>,
+    elem_types: Vec<ElemOrGroup>,
     char_types: Vec<(String, String)>,
 }
 
@@ -15,33 +25,59 @@ pub(crate) fn merge(
 ) -> Result<(), String> {
     // begin the merge at the top-level AR:AUTOSAR type, which must exist by definition
     let mut merge_queue = MergeItems::from_vecs(
-        vec![("AR:AUTOSAR".to_owned(), "AR:AUTOSAR".to_owned())],
+        vec![ElemOrGroup::Element(
+            "AR:AUTOSAR".to_owned(),
+            "AR:AUTOSAR".to_owned(),
+        )],
         Vec::new(),
     );
 
-    let mut already_checked = HashSet::new();
-    while let Some((typename_merged, typename_input)) = merge_queue.elem_types.pop() {
-        if already_checked
-            .get(&(typename_merged.clone(), typename_input.clone()))
-            .is_none()
-        {
-            // println!("  {typename_merged} <-> {typename_input}");
-
-            // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
-            if merged_xsd.element_types.get(&typename_merged).is_none() {
-                if let Some(input_type) = input_xsd.element_types.get(&typename_input) {
-                    merged_xsd
-                        .element_types
-                        .insert(typename_merged.clone(), input_type.clone());
+    let mut already_checked: HashSet<ElemOrGroup> = HashSet::new();
+    // while let Some((typename_merged, typename_input)) = merge_queue.elem_types.pop() {
+    while let Some(elem_or_group) = merge_queue.elem_types.pop() {
+        if already_checked.get(&elem_or_group).is_none() {
+            match &elem_or_group {
+                ElemOrGroup::Element(typename_merged, typename_input) => {
+                    // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
+                    if merged_xsd.element_types.get(typename_merged).is_none() {
+                        if let Some(input_type) = input_xsd.element_types.get(typename_input) {
+                            merged_xsd
+                                .element_types
+                                .insert(typename_merged.clone(), input_type.clone());
+                        }
+                    }
+                    if merged_xsd.element_types.get(typename_merged).is_some() {
+                        let mut additional_items = merge_elem_types(
+                            merged_xsd,
+                            typename_merged,
+                            input_xsd,
+                            typename_input,
+                        );
+                        merge_queue.append(&mut additional_items);
+                    }
+                    already_checked.insert(elem_or_group);
+                }
+                ElemOrGroup::Group(typename_merged, typename_input) => {
+                    // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
+                    if merged_xsd.group_types.get(typename_merged).is_none() {
+                        if let Some(input_type) = input_xsd.group_types.get(typename_input) {
+                            merged_xsd
+                                .group_types
+                                .insert(typename_merged.clone(), input_type.clone());
+                        }
+                    }
+                    if merged_xsd.group_types.get(typename_merged).is_some() {
+                        let mut additional_items = merge_group_types(
+                            merged_xsd,
+                            typename_merged,
+                            input_xsd,
+                            typename_input,
+                        )?;
+                        merge_queue.append(&mut additional_items);
+                    }
+                    already_checked.insert(elem_or_group);
                 }
             }
-
-            if merged_xsd.element_types.get(&typename_merged).is_some() {
-                let mut additional_items =
-                    merge_elem_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
-                merge_queue.append(&mut additional_items);
-            }
-            already_checked.insert((typename_merged.clone(), typename_input.clone()));
         }
     }
 
@@ -60,7 +96,7 @@ pub(crate) fn merge(
             }
 
             if merged_xsd.character_types.get(&typename_merged).is_some() {
-                merge_char_types(merged_xsd, &typename_merged, input_xsd, &typename_input)?;
+                merge_char_types(merged_xsd, &typename_merged, input_xsd, &typename_input);
             }
 
             already_checked.insert((typename_merged, typename_input));
@@ -75,23 +111,22 @@ fn merge_char_types(
     typename: &str,
     input_xsd: &AutosarDataTypes,
     typename_input: &str,
-) -> Result<(), String> {
+) {
     let a = merged_xsd.character_types.get_mut(typename).unwrap();
     let b = input_xsd.character_types.get(typename_input).unwrap();
 
     match (a, b) {
         (CharacterDataType::Enum(enumdef), CharacterDataType::Enum(enumdef_new)) => {
-            merge_enums(enumdef, enumdef_new)?;
+            merge_enums(enumdef, enumdef_new);
         }
-        (CharacterDataType::Pattern { .. }, CharacterDataType::Pattern { .. }) => {}
-        (CharacterDataType::String { .. }, CharacterDataType::String { .. }) => {}
-        (CharacterDataType::UnsignedInteger, CharacterDataType::UnsignedInteger) => {}
-        (CharacterDataType::Double, CharacterDataType::Double) => {}
+        (CharacterDataType::Pattern { .. }, CharacterDataType::Pattern { .. })
+        | (CharacterDataType::String { .. }, CharacterDataType::String { .. })
+        | (CharacterDataType::UnsignedInteger, CharacterDataType::UnsignedInteger)
+        | (CharacterDataType::Double, CharacterDataType::Double) => {}
         (_aa, _bb) => {
             // println!("mixed character types: {typename}={_aa:#?} - {typename_input}={_bb:#?}");
         }
     }
-    Ok(())
 }
 
 fn merge_elem_types(
@@ -99,7 +134,7 @@ fn merge_elem_types(
     typename: &str,
     input_xsd: &AutosarDataTypes,
     typename_input: &str,
-) -> Result<MergeItems, String> {
+) -> MergeItems {
     let a = merged_xsd.element_types.get_mut(typename).unwrap();
     let b = input_xsd.element_types.get(typename_input).unwrap();
     let mut result = MergeItems::new();
@@ -107,33 +142,20 @@ fn merge_elem_types(
     match (a, b) {
         (
             ElementDataType::Elements {
-                element_collection,
+                group_ref,
                 attributes,
-                ordered,
-                splittable,
                 xsd_typenames,
             },
             ElementDataType::Elements {
-                element_collection: elem_collection_new,
+                group_ref: group_ref_new,
                 attributes: attributes_new,
-                ordered: ordered_new,
-                splittable: splitable_new,
                 xsd_typenames: xsd_typenames_new,
             },
         ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-                &merged_xsd.character_types,
-                &input_xsd.character_types,
-                typename_input,
-            )?);
-            result.append(&mut merge_attributes(attributes, attributes_new)?);
-            // if either side of the merge is set to ordered, then ordered is always set in the merge result
-            if *ordered_new {
-                *ordered = true;
-            }
-            *splittable = *splittable | *splitable_new;
+            result
+                .elem_types
+                .push(ElemOrGroup::Group(group_ref.clone(), group_ref_new.clone()));
+            result.append(&mut merge_attributes(attributes, attributes_new));
             for xtn in xsd_typenames_new {
                 // most of these are duplicates, but that doesn't matter
                 xsd_typenames.insert(xtn.to_owned());
@@ -151,50 +173,32 @@ fn merge_elem_types(
                 ..
             },
         ) => {
-            result.append(&mut merge_attributes(attributes, attributes_new)?);
+            result.append(&mut merge_attributes(attributes, attributes_new));
             result
                 .char_types
-                .push((basetype.to_string(), basetype_new.to_string()));
+                .push(((*basetype).to_string(), basetype_new.to_string()));
         }
         (
             ElementDataType::Mixed {
-                element_collection,
+                group_ref,
                 attributes,
                 basetype,
                 ..
             },
             ElementDataType::Mixed {
-                element_collection: elem_collection_new,
+                group_ref: group_ref_new,
                 attributes: attributes_new,
                 basetype: basetype_new,
                 ..
             },
         ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-                &merged_xsd.character_types,
-                &input_xsd.character_types,
-                typename_input,
-            )?);
-            result.append(&mut merge_attributes(attributes, attributes_new)?);
+            result
+                .elem_types
+                .push(ElemOrGroup::Group(group_ref.clone(), group_ref_new.clone()));
+            result.append(&mut merge_attributes(attributes, attributes_new));
             result
                 .char_types
-                .push((basetype.to_string(), basetype_new.to_string()));
-        }
-        (
-            ElementDataType::ElementsGroup { element_collection },
-            ElementDataType::ElementsGroup {
-                element_collection: elem_collection_new,
-            },
-        ) => {
-            result.append(&mut merge_element_collection(
-                element_collection,
-                elem_collection_new,
-                &merged_xsd.character_types,
-                &input_xsd.character_types,
-                typename_input,
-            )?);
+                .push(((*basetype).to_string(), basetype_new.to_string()));
         }
         (
             ElementDataType::Mixed { attributes, .. },
@@ -203,27 +207,30 @@ fn merge_elem_types(
                 ..
             },
         ) => {
-            result.append(&mut merge_attributes(attributes, attributes_new)?);
+            result.append(&mut merge_attributes(attributes, attributes_new));
         }
         (_aa, _bb) => {
             // println!("mixed element types: {typename}={_aa:#?} - {typename_input}={_bb:#?}");
         }
     }
 
-    Ok(result)
+    result
 }
 
-fn merge_element_collection(
-    element_collection: &mut ElementCollection,
-    element_collection_new: &ElementCollection,
-    character_types: &FxHashMap<String, CharacterDataType>,
-    character_types_new: &FxHashMap<String, CharacterDataType>,
-    _src_typename: &str,
+fn merge_group_types(
+    merged_xsd: &mut AutosarDataTypes,
+    typename: &str,
+    input_xsd: &AutosarDataTypes,
+    typename_input: &str,
 ) -> Result<MergeItems, String> {
+    let element_collection = merged_xsd.group_types.get_mut(typename).unwrap();
+    let element_collection_new = input_xsd.group_types.get(typename_input).unwrap();
     let mut insert_pos: usize = 0;
 
     // never insert any element in position 0 ahead of the SHORT-NAME
-    if let Some(ElementCollectionItem::Element(Element{ref name, ..})) = element_collection.items().get(0) {
+    if let Some(ElementCollectionItem::Element(Element { ref name, .. })) =
+        element_collection.items().first()
+    {
         if name == "SHORT-NAME" {
             insert_pos = 1;
         }
@@ -243,8 +250,8 @@ fn merge_element_collection(
                             && element_is_compatible(
                                 e,
                                 newelem,
-                                character_types,
-                                character_types_new,
+                                &merged_xsd.character_types,
+                                &input_xsd.character_types,
                             )
                     })
                     // .find(|(_idx, e)| e.name() == newelem.name())
@@ -259,10 +266,10 @@ fn merge_element_collection(
                             ElementCollectionItem::Element(new_elem),
                         ) => {
                             cur_elem.version_info |= new_elem.version_info;
-                            // println!("    element {} requires merge of types {} and {}", cur_elem.name, cur_elem.typeref, new_elem.typeref);
-                            typesvec
-                                .elem_types
-                                .push((cur_elem.typeref.clone(), new_elem.typeref.clone()));
+                            typesvec.elem_types.push(ElemOrGroup::Element(
+                                cur_elem.typeref.clone(),
+                                new_elem.typeref.clone(),
+                            ));
                         }
                         (
                             ElementCollectionItem::GroupRef(cur_group),
@@ -270,7 +277,7 @@ fn merge_element_collection(
                         ) => {
                             typesvec
                                 .elem_types
-                                .push((cur_group.clone(), new_group.clone()));
+                                .push(ElemOrGroup::Group(cur_group.clone(), new_group.clone()));
                         }
                         (a, b) => {
                             return Err(format!(
@@ -288,14 +295,18 @@ fn merge_element_collection(
                 } else {
                     sub_elements.insert(insert_pos, newelem.clone());
                     match &newelem {
-                        ElementCollectionItem::Element(Element { typeref, .. })
-                        | ElementCollectionItem::GroupRef(typeref) => {
-                            typesvec.elem_types.push((typeref.clone(), typeref.clone()));
-                            // println!("  # inserting element <{}> of type [{typeref:?}]", newelem.name());
+                        ElementCollectionItem::Element(Element { typeref, .. }) => {
+                            typesvec
+                                .elem_types
+                                .push(ElemOrGroup::Element(typeref.clone(), typeref.clone()));
+                        }
+                        ElementCollectionItem::GroupRef(typeref) => {
+                            typesvec
+                                .elem_types
+                                .push(ElemOrGroup::Group(typeref.clone(), typeref.clone()));
                         }
                     }
 
-                    //                 println!("for element type [{}]: adding {}", elem_type_name, newelem.name());
                     insert_pos += 1;
                 }
             }
@@ -307,7 +318,7 @@ fn merge_element_collection(
 fn merge_attributes(
     attributes: &mut Vec<Attribute>,
     attributes_new: &Vec<Attribute>,
-) -> Result<MergeItems, String> {
+) -> MergeItems {
     let mut result = MergeItems::new();
     let mut insert_pos = 0;
     for newattr in attributes_new {
@@ -320,22 +331,21 @@ fn merge_attributes(
             attributes[find_pos].version_info |= newattr.version_info;
 
             result.char_types.push((
-                attributes[find_pos].attribute_type.clone(),
-                newattr.attribute_type.clone(),
+                attributes[find_pos].attr_type.clone(),
+                newattr.attr_type.clone(),
             ));
 
             insert_pos = find_pos + 1;
         } else {
             attributes.insert(insert_pos, newattr.clone());
-            //         println!("for element type [{}]: adding attribute {} [{:?}]", _elem_type_name, newattr.name, newattr.attribute_type);
             insert_pos += 1;
         }
     }
 
-    Ok(result)
+    result
 }
 
-fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) -> Result<(), String> {
+fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) {
     let EnumDefinition { name, enumitems } = enumdef;
     let EnumDefinition {
         name: name_new,
@@ -358,11 +368,9 @@ fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) -> Re
             insert_pos = find_pos + 1;
         } else {
             enumitems.insert(insert_pos, (newitem.clone(), *newver));
-            //         println!("for enum {}: adding item {}", name, newitem);
             insert_pos += 1;
         }
     }
-    Ok(())
 }
 
 fn element_is_compatible(
@@ -414,7 +422,7 @@ impl MergeItems {
         }
     }
 
-    fn from_vecs(elem_types: Vec<(String, String)>, char_types: Vec<(String, String)>) -> Self {
+    fn from_vecs(elem_types: Vec<ElemOrGroup>, char_types: Vec<(String, String)>) -> Self {
         Self {
             elem_types,
             char_types,

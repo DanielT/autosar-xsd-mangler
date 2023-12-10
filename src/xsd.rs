@@ -1,5 +1,6 @@
 use std::io::BufReader;
 use std::{collections::HashMap, fs::File};
+use xml::ParserConfig;
 use xml::{
     attribute::OwnedAttribute,
     common::{Position, TextPosition, XmlVersion},
@@ -77,10 +78,13 @@ pub(crate) struct XsdGroup {
     pub(crate) item: XsdGroupItem,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct XsdGroupAttributes {
-    pub(crate) ordered: bool,
-    pub(crate) splittable: bool,
+#[derive(Debug, Eq, PartialEq, Hash, Default, Clone, Copy, PartialOrd, Ord)]
+pub(crate) enum XsdRestrictToStandard {
+    #[default]
+    NotSet,
+    ClassicPlatform,
+    AdaptivePlatform,
+    Both,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -89,14 +93,16 @@ pub(crate) struct XsdElement {
     pub(crate) typeref: String,
     pub(crate) min_occurs: usize,
     pub(crate) max_occurs: usize,
+    pub(crate) ordered: bool,
+    pub(crate) splittable: bool,
+    pub(crate) restrict_std: XsdRestrictToStandard,
+    pub(crate) doctext: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum XsdComplexTypeItem {
     SimpleContent(XsdSimpleContent),
     Group(String),
-    Choice(XsdChoice),
-    Sequence(XsdSequence),
     None,
 }
 
@@ -106,6 +112,8 @@ pub(crate) struct XsdComplexType {
     pub(crate) item: XsdComplexTypeItem,
     pub(crate) attribute_groups: Vec<String>,
     pub(crate) mixed_content: bool,
+    pub(crate) category: Option<String>,
+    pub(crate) doctext: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -125,21 +133,30 @@ pub(crate) enum XsdType {
 pub(crate) struct Xsd {
     pub(crate) root_elements: Vec<XsdElement>,
     pub(crate) groups: HashMap<String, XsdGroup>,
-    pub(crate) group_attributes: HashMap<String, XsdGroupAttributes>,
     pub(crate) types: HashMap<String, XsdType>,
     pub(crate) attribute_groups: HashMap<String, XsdAttributeGroup>,
     pub(crate) version_info: usize,
 }
 
+struct StartElementInfo {
+    name: String,
+    attributes: Vec<OwnedAttribute>,
+    comment: Option<String>,
+}
+
 impl Xsd {
     pub(crate) fn load(file: File, version_info: usize) -> Result<Xsd, String> {
         let file = BufReader::new(file);
-        let mut parser = EventReader::new(file);
+        // let mut parser = EventReader::new(file);
+        let mut parser = ParserConfig::new()
+            .trim_whitespace(true)
+            .ignore_comments(false)
+            .coalesce_characters(false)
+            .create_reader(file);
 
         let mut data = Xsd {
             attribute_groups: HashMap::new(),
             groups: HashMap::new(),
-            group_attributes: HashMap::new(),
             types: HashMap::new(),
             root_elements: Vec::new(),
             version_info,
@@ -188,8 +205,7 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
         // it's correct
     } else {
         return Err(format!(
-            "Error: incorrect element at the start of the xsd document - found {:?}",
-            head
+            "Error: incorrect element at the start of the xsd document - found {head:?}"
         ));
     }
 
@@ -201,47 +217,51 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
     {
         if local_name != "schema" {
             return Err(format!(
-                "Error: not a valid xsd document, found element <{}> where <schema> was expected",
-                local_name
+                "Error: not a valid xsd document, found element <{local_name}> where <schema> was expected"
             ));
         }
     } else {
         return Err(format!(
-            "Error: not a valid xsd document. Found {:?} where element <schema> was expected",
-            schema
+            "Error: not a valid xsd document. Found {schema:?} where element <schema> was expected"
         ));
     }
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "schema")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "schema")? {
+        match element_info.name.as_ref() {
             "import" => {
                 // no handling of imports, just consume the EndElement
                 get_next_event(parser)?;
             }
             "group" => {
-                parse_group(parser, data, &elem_attributes, vec![])?;
+                parse_group(parser, data, &element_info.attributes, vec![])?;
                 // parse_group adds the parsed group to data.groups
             }
             "simpleType" => {
-                parse_simple_type(parser, data, &elem_attributes)?;
+                parse_simple_type(parser, data, &element_info.attributes)?;
                 // parse_simple_type adds the parsed simpleType to data.types
             }
             "attributeGroup" => {
-                parse_attribute_group(parser, data, &elem_attributes)?;
+                parse_attribute_group(parser, data, &element_info.attributes)?;
                 // parse_attribute_group adds the parsed attributeGroup to data.attribute_groups
             }
             "complexType" => {
-                parse_complex_type(parser, data, &elem_attributes, vec![])?;
+                parse_complex_type(
+                    parser,
+                    data,
+                    &element_info.attributes,
+                    element_info.comment,
+                    vec![],
+                )?;
                 // parse_complex_type adds the parsed complexType to data.types
             }
             "element" => {
-                let element = parse_element(parser, data, &elem_attributes, vec![])?;
+                let element = parse_element(parser, data, &element_info.attributes, vec![])?;
                 data.root_elements.push(element);
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -253,8 +273,7 @@ fn parse_schema(parser: &mut EventReader<BufReader<File>>, data: &mut Xsd) -> Re
         Ok(())
     } else {
         Err(format!(
-            "Error: found element {:?} when end of document was expected",
-            end
+            "Error: found element {end:?} when end of document was expected"
         ))
     }
 }
@@ -270,20 +289,21 @@ fn parse_element(
     let attr_max_occurs = get_attribute_value("maxOccurs", attributes);
     let attr_min_occurs = get_attribute_value("minOccurs", attributes);
 
-    let max_occurs = parse_occurs_attribute(&attr_max_occurs)?;
-    let min_occurs = parse_occurs_attribute(&attr_min_occurs)?;
+    let max_occurs = parse_occurs_attribute(attr_max_occurs)?;
+    let min_occurs = parse_occurs_attribute(attr_min_occurs)?;
     let mut mm_attributes = HashMap::new();
+    let mut doctext = None;
 
     if let Some(typeref) = attr_typeref {
-        while let Some((local_name, _)) = get_next_element(parser, "element")? {
-            match local_name.as_ref() {
+        while let Some(element_info) = get_next_element(parser, "element")? {
+            match element_info.name.as_ref() {
                 "annotation" => {
-                    mm_attributes = parse_mm_attributes_from_annotation(parser)?;
+                    (mm_attributes, doctext) = parse_annotation(parser)?;
                 }
                 _ => {
                     return Err(format!(
                         "Error: found unexpected start of element tag \"{}\" at {}",
-                        local_name,
+                        element_info.name,
                         parser.position()
                     ));
                 }
@@ -291,48 +311,46 @@ fn parse_element(
         }
         let ordered = mm_attributes
             .get("pureMM.isOrdered")
-            .and_then(|val| Some(val == "true"))
-            .or(Some(false))
-            .unwrap();
+            .is_some_and(|val| val == "true");
         let splittable = mm_attributes.get("atpSplitable").is_some();
-        data.group_attributes.insert(
-            typeref.to_owned(),
-            XsdGroupAttributes {
-                ordered,
-                splittable,
-            },
-        );
+        let restrict_std = get_restrict_to_standard(&mm_attributes);
+
         Ok(XsdElement {
             name: attr_name.to_owned(),
             typeref: typeref.to_owned(),
             max_occurs,
             min_occurs,
+            ordered,
+            splittable,
+            restrict_std,
+            doctext,
         })
     } else {
         let mut typeref_opt = None;
 
-        extend_prev_names(&mut prev_names, &Some(attr_name));
+        extend_prev_names(&mut prev_names, Some(attr_name));
 
-        while let Some((local_name, elem_attributes)) = get_next_element(parser, "element")? {
-            match local_name.as_ref() {
+        while let Some(element_info) = get_next_element(parser, "element")? {
+            match element_info.name.as_ref() {
                 "annotation" => {
-                    mm_attributes = parse_mm_attributes_from_annotation(parser)?;
+                    (mm_attributes, doctext) = parse_annotation(parser)?;
                 }
                 "simpleType" => {
-                    typeref_opt = Some(parse_simple_type(parser, data, &elem_attributes)?);
+                    typeref_opt = Some(parse_simple_type(parser, data, &element_info.attributes)?);
                 }
                 "complexType" => {
                     typeref_opt = Some(parse_complex_type(
                         parser,
                         data,
-                        &elem_attributes,
+                        &element_info.attributes,
+                        element_info.comment,
                         prev_names.clone(),
                     )?);
                 }
                 _ => {
                     return Err(format!(
                         "Error: found unexpected start of element tag \"{}\" at {}",
-                        local_name,
+                        element_info.name,
                         parser.position()
                     ));
                 }
@@ -342,22 +360,19 @@ fn parse_element(
         if let Some(typeref) = typeref_opt {
             let ordered = mm_attributes
                 .get("pureMM.isOrdered")
-                .and_then(|val| Some(val == "true"))
-                .or(Some(false))
-                .unwrap();
+                .is_some_and(|val| val == "true");
             let splittable = mm_attributes.get("atpSplitable").is_some();
-            data.group_attributes.insert(
-                typeref.to_owned(),
-                XsdGroupAttributes {
-                    ordered,
-                    splittable,
-                },
-            );
+            let restrict_std = get_restrict_to_standard(&mm_attributes);
+
             Ok(XsdElement {
                 name: attr_name.to_owned(),
                 typeref,
                 max_occurs,
                 min_occurs,
+                ordered,
+                splittable,
+                restrict_std,
+                doctext,
             })
         } else {
             Err(format!(
@@ -389,28 +404,28 @@ fn parse_group(
         let mut sequence: Option<XsdSequence> = None;
         let mut choice: Option<XsdChoice> = None;
 
-        extend_prev_names(&mut prev_names, &Some(name));
+        extend_prev_names(&mut prev_names, Some(name));
 
-        while let Some((local_name, elem_attributes)) = get_next_element(parser, "group")? {
-            match local_name.as_ref() {
+        while let Some(element_info) = get_next_element(parser, "group")? {
+            match element_info.name.as_ref() {
                 "annotation" => {
                     skip_annotation(parser)?;
                 }
                 "sequence" => {
-                    sequence = Some(parse_sequence(parser, data, prev_names.clone())?);
+                    sequence = Some(parse_sequence(parser, data, &prev_names)?);
                 }
                 "choice" => {
                     choice = Some(parse_choice(
                         parser,
                         data,
-                        &elem_attributes,
-                        prev_names.clone(),
+                        &element_info.attributes,
+                        &prev_names,
                     )?);
                 }
                 _ => {
                     return Err(format!(
                         "Error: found unexpected start of element tag \"{}\" at {}",
-                        local_name,
+                        element_info.name,
                         parser.position()
                     ));
                 }
@@ -429,7 +444,7 @@ fn parse_group(
             (None, None) => XsdGroupItem::None,
         };
 
-        let typeref = format!("AR:{}", name);
+        let typeref = format!("AR:{name}");
         data.groups.insert(typeref.clone(), XsdGroup { item });
 
         Ok(typeref)
@@ -449,18 +464,18 @@ fn parse_simple_type(
     let name = get_required_attribute_value("name", attributes, &parser.position())?;
     let mut restriction: Option<XsdRestriction> = None;
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "simpleType")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "simpleType")? {
+        match element_info.name.as_ref() {
             "annotation" => {
                 skip_annotation(parser)?;
             }
             "restriction" => {
-                restriction = Some(parse_restriction(parser, &elem_attributes)?);
+                restriction = Some(parse_restriction(parser, &element_info.attributes)?);
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -468,7 +483,7 @@ fn parse_simple_type(
     }
 
     if let Some(restriction) = restriction {
-        let nameref = format!("AR:{}", name);
+        let nameref = format!("AR:{name}");
         data.types.insert(
             nameref,
             XsdType::Simple(XsdSimpleType::Restriction(restriction)),
@@ -487,6 +502,7 @@ fn parse_complex_type(
     parser: &mut EventReader<BufReader<File>>,
     data: &mut Xsd,
     attributes: &Vec<OwnedAttribute>,
+    comment: Option<String>,
     mut prev_names: Vec<String>,
 ) -> Result<String, String> {
     let attr_name = get_attribute_value("name", attributes);
@@ -510,12 +526,15 @@ fn parse_complex_type(
         todo!()
     };
 
-    extend_prev_names(&mut prev_names, &attr_name);
+    let category = category_from_comment(comment);
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "complexType")? {
-        match local_name.as_ref() {
+    extend_prev_names(&mut prev_names, attr_name);
+
+    let mut doctext = None;
+    while let Some(element_info) = get_next_element(parser, "complexType")? {
+        match element_info.name.as_ref() {
             "annotation" => {
-                skip_annotation(parser)?;
+                (_, doctext) = parse_annotation(parser)?;
             }
             "simpleContent" => {
                 item = XsdComplexTypeItem::SimpleContent(parse_simple_content(parser, data)?);
@@ -525,33 +544,43 @@ fn parse_complex_type(
                 item = XsdComplexTypeItem::Group(parse_group(
                     parser,
                     data,
-                    &elem_attributes,
+                    &element_info.attributes,
                     prev_names.clone(),
                 )?);
                 item_count += 1;
             }
             "sequence" => {
-                item =
-                    XsdComplexTypeItem::Sequence(parse_sequence(parser, data, prev_names.clone())?);
+                let sequence = parse_sequence(parser, data, &prev_names)?;
+                let group = XsdGroup {
+                    item: XsdGroupItem::Sequence(sequence),
+                };
+                let generated_group_name = format!("{name}/ELEMENTGROUP");
+                data.groups.insert(generated_group_name.clone(), group);
+                item = XsdComplexTypeItem::Group(generated_group_name);
                 item_count += 1;
             }
             "choice" => {
-                item = XsdComplexTypeItem::Choice(parse_choice(
-                    parser,
-                    data,
-                    &elem_attributes,
-                    prev_names.clone(),
-                )?);
+                let choice = parse_choice(parser, data, &element_info.attributes, &prev_names)?;
+                let group = XsdGroup {
+                    item: XsdGroupItem::Choice(choice),
+                };
+                let generated_group_name = format!("{name}/ELEMENTGROUP");
+                data.groups.insert(generated_group_name.clone(), group);
+                item = XsdComplexTypeItem::Group(generated_group_name);
                 item_count += 1;
             }
             "attributeGroup" => {
-                attribute_groups.push(parse_attribute_group(parser, data, &elem_attributes)?);
+                attribute_groups.push(parse_attribute_group(
+                    parser,
+                    data,
+                    &element_info.attributes,
+                )?);
                 // any number of attribute groups allowed, without excluding any other items, so item_count is not incremented
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -564,12 +593,14 @@ fn parse_complex_type(
         }
     }
 
-    let typeref = format!("AR:{}", name);
+    let typeref = format!("AR:{name}");
     let newtype = XsdType::Complex(XsdComplexType {
         name,
         item,
         attribute_groups,
         mixed_content,
+        category,
+        doctext,
     });
 
     if let Some(oldtype) = data.types.get(&typeref) {
@@ -599,26 +630,25 @@ fn parse_attribute_group(
         // a new attribute group is declared
         let mut attributes = Vec::new();
 
-        while let Some((local_name, elem_attributes)) = get_next_element(parser, "attributeGroup")?
-        {
-            match local_name.as_ref() {
+        while let Some(element_info) = get_next_element(parser, "attributeGroup")? {
+            match element_info.name.as_ref() {
                 "annotation" => {
                     skip_annotation(parser)?;
                 }
                 "attribute" => {
-                    attributes.push(parse_attribute(parser, &elem_attributes)?);
+                    attributes.push(parse_attribute(parser, &element_info.attributes)?);
                 }
                 _ => {
                     return Err(format!(
                         "Error: found unexpected start of element tag \"{}\" at {}",
-                        local_name,
+                        element_info.name,
                         parser.position()
                     ));
                 }
             }
         }
 
-        let nameref = format!("AR:{}", name);
+        let nameref = format!("AR:{name}");
         data.attribute_groups
             .insert(nameref.clone(), XsdAttributeGroup { attributes });
 
@@ -675,15 +705,15 @@ fn parse_simple_content(
 ) -> Result<XsdSimpleContent, String> {
     let mut extension = None;
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "simpleContent")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "simpleContent")? {
+        match element_info.name.as_ref() {
             "extension" => {
-                extension = Some(parse_extension(parser, data, &elem_attributes)?);
+                extension = Some(parse_extension(parser, data, &element_info.attributes)?);
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -703,12 +733,12 @@ fn parse_simple_content(
 fn parse_sequence(
     parser: &mut EventReader<BufReader<File>>,
     data: &mut Xsd,
-    prev_names: Vec<String>,
+    prev_names: &[String],
 ) -> Result<XsdSequence, String> {
     let mut items = Vec::new();
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "sequence")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "sequence")? {
+        match element_info.name.as_ref() {
             "annotation" => {
                 skip_annotation(parser)?;
             }
@@ -716,24 +746,26 @@ fn parse_sequence(
                 items.push(XsdModelGroupItem::Element(parse_element(
                     parser,
                     data,
-                    &elem_attributes,
-                    prev_names.clone(),
+                    &element_info.attributes,
+                    prev_names.to_owned(),
                 )?));
             }
             "group" => {
                 items.push(XsdModelGroupItem::Group(parse_group(
                     parser,
                     data,
-                    &elem_attributes,
-                    prev_names.clone(),
+                    &element_info.attributes,
+                    prev_names.to_owned(),
                 )?));
             }
             "choice" => {
-                let choice_item = parse_choice(parser, data, &elem_attributes, prev_names.clone())?;
+                let choice_item = parse_choice(parser, data, &element_info.attributes, prev_names)?;
                 // transform every choice inside a sequence into a group(choice) instead
                 // for this we want a unique-but-stable name
                 let pns = prev_names.join("-");
-                if let Some(first_inner_name) = choice_item.items.get(0).map(|inner| inner.name()) {
+                if let Some(first_inner_name) =
+                    choice_item.items.first().map(XsdModelGroupItem::name)
+                {
                     // only do anything else if the choice is not empty
                     let choice_name = format!("AR:SEQUENCE-CHOICE--{pns}-{first_inner_name}");
                     // now wrap the choice in a group and add it to the list of groups
@@ -754,7 +786,7 @@ fn parse_sequence(
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -768,45 +800,45 @@ fn parse_choice(
     parser: &mut EventReader<BufReader<File>>,
     data: &mut Xsd,
     attributes: &Vec<OwnedAttribute>,
-    prev_names: Vec<String>,
+    prev_names: &[String],
 ) -> Result<XsdChoice, String> {
     let mut items = Vec::new();
     let attr_max_occurs = get_attribute_value("maxOccurs", attributes);
     let attr_min_occurs = get_attribute_value("minOccurs", attributes);
 
-    let max_occurs = parse_occurs_attribute(&attr_max_occurs)?;
-    let min_occurs = parse_occurs_attribute(&attr_min_occurs)?;
+    let max_occurs = parse_occurs_attribute(attr_max_occurs)?;
+    let min_occurs = parse_occurs_attribute(attr_min_occurs)?;
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "choice")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "choice")? {
+        match element_info.name.as_ref() {
             "element" => {
                 items.push(XsdModelGroupItem::Element(parse_element(
                     parser,
                     data,
-                    &elem_attributes,
-                    prev_names.clone(),
+                    &element_info.attributes,
+                    prev_names.to_owned(),
                 )?));
             }
             "group" => {
                 items.push(XsdModelGroupItem::Group(parse_group(
                     parser,
                     data,
-                    &elem_attributes,
-                    prev_names.clone(),
+                    &element_info.attributes,
+                    prev_names.to_owned(),
                 )?));
             }
             "choice" => {
                 items.push(XsdModelGroupItem::Choice(Box::new(parse_choice(
                     parser,
                     data,
-                    &elem_attributes,
-                    prev_names.clone(),
+                    &element_info.attributes,
+                    prev_names,
                 )?)));
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -814,9 +846,9 @@ fn parse_choice(
     }
 
     Ok(XsdChoice {
-        items,
-        max_occurs,
         min_occurs,
+        max_occurs,
+        items,
     })
 }
 
@@ -830,21 +862,30 @@ fn parse_restriction(
     let mut literal = false;
     let basetype = get_required_attribute_value("base", attributes, &parser.position())?;
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "restriction")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "restriction")? {
+        match element_info.name.as_ref() {
             "enumeration" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value(
+                    "value",
+                    &element_info.attributes,
+                    &parser.position(),
+                )?;
                 enumvalues.push(attrval.to_owned());
             }
             "pattern" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value(
+                    "value",
+                    &element_info.attributes,
+                    &parser.position(),
+                )?;
                 pattern = Some(attrval.to_owned());
             }
             "maxLength" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value(
+                    "value",
+                    &element_info.attributes,
+                    &parser.position(),
+                )?;
                 if let Ok(val) = attrval.parse() {
                     max_length = Some(val);
                 } else {
@@ -856,8 +897,11 @@ fn parse_restriction(
                 }
             }
             "whiteSpace" => {
-                let attrval =
-                    get_required_attribute_value("value", &elem_attributes, &parser.position())?;
+                let attrval = get_required_attribute_value(
+                    "value",
+                    &element_info.attributes,
+                    &parser.position(),
+                )?;
                 if attrval == "preserve" {
                     literal = true;
                 }
@@ -865,12 +909,12 @@ fn parse_restriction(
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
         }
-        get_element_end_tag(parser, &local_name)?;
+        get_element_end_tag(parser, &element_info.name)?;
     }
 
     if (literal && (!enumvalues.is_empty() || pattern.is_some()))
@@ -907,18 +951,22 @@ fn parse_extension(
     let mut attributes = Vec::new();
     let mut attribute_groups = Vec::new();
 
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "extension")? {
-        match local_name.as_ref() {
+    while let Some(element_info) = get_next_element(parser, "extension")? {
+        match element_info.name.as_ref() {
             "attribute" => {
-                attributes.push(parse_attribute(parser, &elem_attributes)?);
+                attributes.push(parse_attribute(parser, &element_info.attributes)?);
             }
             "attributeGroup" => {
-                attribute_groups.push(parse_attribute_group(parser, data, &elem_attributes)?);
+                attribute_groups.push(parse_attribute_group(
+                    parser,
+                    data,
+                    &element_info.attributes,
+                )?);
             }
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
@@ -962,34 +1010,35 @@ fn skip_annotation(parser: &mut EventReader<BufReader<File>>) -> Result<(), Stri
     Ok(())
 }
 
-fn parse_mm_attributes_from_annotation(
+fn parse_annotation(
     parser: &mut EventReader<BufReader<File>>,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<(HashMap<String, String>, Option<String>), String> {
     let mut tagmap = HashMap::<String, String>::new();
-    while let Some((local_name, elem_attributes)) = get_next_element(parser, "annotation")? {
-        match local_name.as_ref() {
+    let mut docstring = None;
+    while let Some(element_info) = get_next_element(parser, "annotation")? {
+        match element_info.name.as_ref() {
             "documentation" => {
-                get_next_element(parser, "documentation")?;
+                docstring = parse_docstring(parser);
             }
             "appinfo" => {
-                let source =
-                    get_required_attribute_value("source", &elem_attributes, &parser.position())?;
+                let source = get_required_attribute_value(
+                    "source",
+                    &element_info.attributes,
+                    &parser.position(),
+                )?;
                 if let XmlEvent::Characters(text) = get_next_event(parser)? {
                     if source == "tags" {
                         let separated_tags: Vec<&str> = text.split(';').collect();
-                        for tag in separated_tags {
+                        for tag in &separated_tags {
                             let taglen = tag.len();
-                            let equalspos = tag
-                                .find('=')
-                                .ok_or("missing '=' in element tag".to_string())?;
-                            let tagname = tag[0..equalspos].to_string();
-                            let tagval = tag[equalspos + 2..taglen - 1].to_string();
-                            tagmap.insert(tagname, tagval);
+                            if let Some(equalspos) = tag.find('=') {
+                                let tagname = tag[0..equalspos].to_string();
+                                let tagval = tag[equalspos + 2..taglen - 1].to_string();
+                                tagmap.insert(tagname, tagval);
+                            }
                         }
-                    } else if source == "stereotypes" {
-                        if text == "atpSplitable" {
-                            tagmap.insert("atpSplitable".to_string(), "true".to_string());
-                        }
+                    } else if source == "stereotypes" && text == "atpSplitable" {
+                        tagmap.insert("atpSplitable".to_string(), "true".to_string());
                     }
                 } else {
                     return Err("Error: expected characters inside <appinfo>".to_string());
@@ -999,14 +1048,22 @@ fn parse_mm_attributes_from_annotation(
             _ => {
                 return Err(format!(
                     "Error: found unexpected start of element tag \"{}\" at {}",
-                    local_name,
+                    element_info.name,
                     parser.position()
                 ));
             }
         }
     }
 
-    Ok(tagmap)
+    Ok((tagmap, docstring))
+}
+
+fn parse_docstring(parser: &mut EventReader<BufReader<File>>) -> Option<String> {
+    if let Ok(XmlEvent::Characters(doctext)) = get_next_event(parser) {
+        get_next_element(parser, "documentation").ok()?;
+        return Some(doctext);
+    }
+    None
 }
 
 fn get_element_end_tag(parser: &mut EventReader<BufReader<File>>, tag: &str) -> Result<(), String> {
@@ -1038,30 +1095,25 @@ fn get_element_end_tag(parser: &mut EventReader<BufReader<File>>, tag: &str) -> 
 }
 
 fn get_next_event(parser: &mut EventReader<BufReader<File>>) -> Result<XmlEvent, String> {
-    let mut next_element = parser.next();
+    let mut next_element = parser.next().map_err(|err| format!("Error: {err}"))?;
 
     let mut done = false;
     while !done {
         match next_element {
-            Ok(XmlEvent::Whitespace(_))
-            | Ok(XmlEvent::Comment(_))
-            | Ok(XmlEvent::ProcessingInstruction { .. }) => {
-                next_element = parser.next();
+            XmlEvent::Whitespace(_) | XmlEvent::ProcessingInstruction { .. } => {
+                next_element = parser.next().map_err(|err| format!("Error: {err}"))?;
             }
             _ => done = true,
         }
     }
-
-    match next_element {
-        Ok(elem) => Ok(elem),
-        Err(err) => Err(format!("Error: {}", err)),
-    }
+    Ok(next_element)
 }
 
 fn get_next_element(
     parser: &mut EventReader<BufReader<File>>,
     parent_element: &str,
-) -> Result<Option<(String, Vec<OwnedAttribute>)>, String> {
+) -> Result<Option<StartElementInfo>, String> {
+    let mut element_comment = None;
     loop {
         let cur_event = get_next_event(parser)?;
         match cur_event {
@@ -1070,7 +1122,11 @@ fn get_next_element(
                 attributes: elem_attributes,
                 ..
             } => {
-                return Ok(Some((local_name, elem_attributes)));
+                return Ok(Some(StartElementInfo {
+                    name: local_name,
+                    attributes: elem_attributes,
+                    comment: element_comment,
+                }));
             }
             XmlEvent::EndElement {
                 name: OwnedName { local_name, .. },
@@ -1092,6 +1148,9 @@ fn get_next_element(
                     cur_event,
                     parser.position()
                 ));
+            }
+            XmlEvent::Comment(c) => {
+                element_comment = Some(c);
             }
             _ => {}
         }
@@ -1120,20 +1179,19 @@ fn get_required_attribute_value<'a>(
         Ok(name)
     } else {
         Err(format!(
-            "Error: mandatory attribute \"{}\" is missing at {}",
-            key, position
+            "Error: mandatory attribute \"{key}\" is missing at {position}"
         ))
     }
 }
 
-fn parse_occurs_attribute(attr_occurs: &Option<&str>) -> Result<usize, String> {
+fn parse_occurs_attribute(attr_occurs: Option<&str>) -> Result<usize, String> {
     if let Some(occurs_str) = attr_occurs {
-        if *occurs_str == "unbounded" {
+        if occurs_str == "unbounded" {
             Ok(std::usize::MAX)
         } else {
             match occurs_str.parse() {
                 Ok(val) => Ok(val),
-                Err(err) => Err(format!("Error: parsing {} - {}", occurs_str, err)),
+                Err(err) => Err(format!("Error: parsing {occurs_str} - {err}")),
             }
         }
     } else {
@@ -1141,11 +1199,11 @@ fn parse_occurs_attribute(attr_occurs: &Option<&str>) -> Result<usize, String> {
     }
 }
 
-fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: &Option<&str>) {
+fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: Option<&str>) {
     if let Some(name) = attr_name {
         let len = prev_names.len();
         if len > 1 {
-            if prev_names[len - 1].contains(*name) || name.contains(&prev_names[len - 1]) {
+            if prev_names[len - 1].contains(name) || name.contains(&prev_names[len - 1]) {
                 prev_names.pop();
                 prev_names.push((*name).to_owned());
             } else {
@@ -1154,6 +1212,28 @@ fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: &Option<&str>) {
         } else {
             prev_names.push((*name).to_owned());
         }
+    }
+}
+
+fn category_from_comment(comment_opt: Option<String>) -> Option<String> {
+    let comment = comment_opt?;
+
+    let cat = comment.strip_prefix(" complex type for class ")?;
+    Some(cat.to_string())
+}
+
+fn get_restrict_to_standard(mm_attributes: &HashMap<String, String>) -> XsdRestrictToStandard {
+    if let Some(restrict_str) = mm_attributes.get("mmt.RestrictToStandards") {
+        if restrict_str.contains("CP") && !restrict_str.contains("AP") {
+            XsdRestrictToStandard::ClassicPlatform
+        } else if !restrict_str.contains("CP") && restrict_str.contains("AP") {
+            XsdRestrictToStandard::AdaptivePlatform
+        } else {
+            // input is CP,AP or invalid
+            XsdRestrictToStandard::Both
+        }
+    } else {
+        XsdRestrictToStandard::NotSet
     }
 }
 

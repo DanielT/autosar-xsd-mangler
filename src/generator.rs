@@ -1,14 +1,47 @@
-use super::*;
+use super::{
+    Attribute, AutosarDataTypes, CharacterDataType, Element, ElementAmount, ElementCollection,
+    ElementCollectionItem, ElementDataType, File, FxHashMap, XsdFileInfo, XsdRestrictToStandard,
+};
 use std::collections::HashSet;
 use std::fmt::Write;
 
 mod perfect_hash;
 
-struct SubelementInfo {
-    subelements_array: Vec<ElementCollectionItem>,
-    subelements_index_info: FxHashMap<String, (usize, usize)>,
+struct GroupsInfo {
+    groups_array: Vec<Group>,
     versions_array: Vec<usize>,
     versions_index_info: FxHashMap<String, usize>,
+    item_ref_array: Vec<GroupItem>,
+    item_ref_info: FxHashMap<String, usize>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum GroupItem {
+    ElementRef(usize),
+    GroupRef(String),
+}
+
+enum Group {
+    Choice {
+        name: String,
+        items: Vec<GroupItem>,
+        amount: ElementAmount,
+    },
+    Sequence {
+        name: String,
+        items: Vec<GroupItem>,
+    },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub(crate) struct SimpleElement {
+    pub(crate) name: String,
+    pub(crate) typeref: String,
+    pub(crate) amount: ElementAmount,
+    pub(crate) splittable: bool,
+    pub(crate) ordered: bool,
+    pub(crate) restrict_std: XsdRestrictToStandard,
+    pub(crate) docstring: Option<String>,
 }
 
 struct AttributeInfo {
@@ -17,37 +50,39 @@ struct AttributeInfo {
     attr_ver_index_info: FxHashMap<String, usize>,
 }
 
-pub(crate) fn generate(
-    xsd_config: &[XsdFileInfo],
-    autosar_schema: &AutosarDataTypes,
-) -> Result<(), String> {
-    generate_xsd_versions(xsd_config)?;
+pub(crate) fn generate(xsd_config: &[XsdFileInfo], autosar_schema: &AutosarDataTypes) {
+    create_output_dir();
 
-    generate_identifier_enums(autosar_schema)?;
+    generate_xsd_versions(xsd_config);
 
-    generate_types(autosar_schema)?;
+    generate_identifier_enums(autosar_schema);
 
-    Ok(())
+    generate_types(autosar_schema);
 }
 
-fn generate_xsd_versions(xsd_config: &[XsdFileInfo]) -> Result<(), String> {
+fn create_output_dir() {
+    let _ = std::fs::create_dir("gen");
+}
+
+fn generate_xsd_versions(xsd_config: &[XsdFileInfo]) {
     let mut match_lines = String::new();
     let mut filename_lines = String::new();
     let mut desc_lines = String::new();
     let mut generated = String::from(
-        r##"use num_derive::FromPrimitive;
+        r"use num_derive::FromPrimitive;
 use num_traits::cast::FromPrimitive;
 
 #[derive(Debug)]
-/// Error type returned when from_str / parse for AutosarVersion fails
+/// Error type returned when `from_str()` / `parse()` for `AutosarVersion` fails
 pub struct ParseAutosarVersionError;
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash, FromPrimitive)]
 #[repr(u32)]
+#[non_exhaustive]
 /// Enum of all Autosar versions
 pub enum AutosarVersion {
-"##,
+",
     );
 
     for (idx, xsd_file_info) in xsd_config.iter().enumerate() {
@@ -90,6 +125,7 @@ pub enum AutosarVersion {
 
 impl AutosarVersion {{
     /// get the name of the xds file matching the Autosar version
+    #[must_use]
     pub fn filename(&self) -> &'static str {{
         match self {{
 {filename_lines}
@@ -99,24 +135,26 @@ impl AutosarVersion {{
     /// Human readable description of the Autosar version
     ///
     /// This is particularly useful for the later versions, where the xsd files are just sequentially numbered.
-    /// For example Autosar_00050 -> "AUTOSAR R21-11"
+    /// For example `Autosar_00050` -> "AUTOSAR R21-11"
+    #[must_use]
     pub fn describe(&self) -> &'static str {{
         match self {{
 {desc_lines}
         }}
     }}
 
-    /// make an AutosarVersion from a u32 value
-    /// 
-    /// All `AutosarVersion`s are associated with a power of two u32 value, for example Autosar_4_3_0 == 0x100
-    /// If the given value is a valid constant of AutosarVersion, the enum value will be returnd
-    /// 
+    /// make an `AutosarVersion` from a u32 value
+    ///
+    /// All `AutosarVersion`s are associated with a power of two u32 value, for example `Autosar_4_3_0` == 0x100
+    /// If the given value is a valid constant of `AutosarVersion`, the enum value will be returnd
+    ///
     /// This is useful in order to decode version masks
+    #[must_use]
     pub fn from_val(n: u32) -> Option<Self> {{
         Self::from_u32(n)
     }}
 
-    /// AutosarVersion::LATEST is an alias of whichever is the latest version, currently Autosar_00051
+    /// `AutosarVersion::LATEST` is an alias of which ever is the latest version
     pub const LATEST: AutosarVersion = AutosarVersion::{lastident};
 }}
 
@@ -125,7 +163,7 @@ impl std::str::FromStr for AutosarVersion {{
     fn from_str(input: &str) -> Result<Self, Self::Err> {{
         match input {{
 {match_lines}
-            _ => Err(ParseAutosarVersionError)
+            _ => Err(ParseAutosarVersionError),
         }}
     }}
 }}
@@ -142,43 +180,30 @@ impl std::fmt::Display for AutosarVersion {{
     use std::io::Write;
     let mut file = File::create("gen/autosarversion.rs").unwrap();
     file.write_all(generated.as_bytes()).unwrap();
-
-    Ok(())
 }
 
-fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), String> {
+fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) {
     let mut attribute_names = HashSet::new();
-    let mut element_names = FxHashMap::<String, HashSet<String>>::default();
+    let mut element_names = HashSet::new();
     let mut enum_items = HashSet::new();
 
-    element_names.insert("AUTOSAR".to_string(), HashSet::new());
-    element_names
-        .get_mut("AUTOSAR")
-        .unwrap()
-        .insert("AR:AUTOSAR".to_string());
+    element_names.insert("AUTOSAR".to_string());
 
-    // for each element data type in the schema
-    for artype in autosar_schema.element_types.values() {
-        if let Some(element_collection) = artype.collection() {
-            for ec_item in element_collection.items() {
-                // for each sub-element of the current element type (skipping groups)
-                if let ElementCollectionItem::Element(elem) = ec_item {
-                    if element_names.get(&elem.name).is_none() {
-                        element_names.insert(elem.name.to_owned(), HashSet::new());
-                    }
-                    // store the name of the sub-element and which element type it uses
-                    // there can be multiple types per name, because names have different meanings in different contexts
-                    element_names
-                        .get_mut(&elem.name)
-                        .unwrap()
-                        .insert(elem.typeref.clone());
+    // for each group type in the schema: collect element names
+    for group_type in autosar_schema.group_types.values() {
+        for ec_item in group_type.items() {
+            // for each sub-element of the current element type (skipping groups)
+            if let ElementCollectionItem::Element(elem) = ec_item {
+                if element_names.get(&elem.name).is_none() {
+                    element_names.insert(elem.name.clone());
                 }
             }
         }
-        if let Some(attributes) = artype.attributes() {
-            for attr in attributes {
-                attribute_names.insert(attr.name.to_owned());
-            }
+    }
+    // for each element data type in the schema: collect attribute names
+    for artype in autosar_schema.element_types.values() {
+        for attr in artype.attributes() {
+            attribute_names.insert(attr.name.clone());
         }
     }
 
@@ -191,12 +216,20 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         }
     }
 
-    let mut element_names: Vec<String> = element_names.keys().map(|name| name.to_owned()).collect();
+    let mut element_names: Vec<String> = element_names
+        .iter()
+        .map(std::borrow::ToOwned::to_owned)
+        .collect();
     element_names.sort();
-    let mut attribute_names: Vec<String> =
-        attribute_names.iter().map(|name| name.to_owned()).collect();
+    let mut attribute_names: Vec<String> = attribute_names
+        .iter()
+        .map(std::borrow::ToOwned::to_owned)
+        .collect();
     attribute_names.sort();
-    let mut enum_items: Vec<String> = enum_items.iter().map(|item| item.to_owned()).collect();
+    let mut enum_items: Vec<String> = enum_items
+        .iter()
+        .map(std::borrow::ToOwned::to_owned)
+        .collect();
     enum_items.sort();
 
     let element_name_refs: Vec<&str> = element_names.iter().map(|name| &**name).collect();
@@ -205,7 +238,7 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         "ElementName",
         "Enum of all element names in Autosar",
         &element_name_refs,
-        disps,
+        &disps,
     );
     use std::io::Write;
     let mut file = File::create("gen/elementname.rs").unwrap();
@@ -217,7 +250,7 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         "AttributeName",
         "Enum of all attribute names in Autosar",
         &attribute_name_refs,
-        disps,
+        &disps,
     );
     let mut file = File::create("gen/attributename.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
@@ -229,79 +262,105 @@ fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) -> Result<(), St
         "EnumItem",
         "Enum of all possible enum values in Autosar",
         &enum_item_refs,
-        disps,
+        &disps,
     );
     let mut file = File::create("gen/enumitem.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
-
-    Ok(())
 }
 
-pub(crate) fn generate_types(autosar_schema: &AutosarDataTypes) -> Result<(), String> {
+pub(crate) fn generate_types(autosar_schema: &AutosarDataTypes) {
     let mut generated = String::from(
-        r##"use crate::*;
+        r#"use crate::*;
 use crate::regex::*;
 
-"##,
+#[cfg(feature = "docstrings")]
+macro_rules! element {
+    ($namepart:ident, $etype:literal, $mult:ident, $ordered:literal, $splittable:ident, $stdrestrict:ident, $docid:expr) => {
+        ElementDefinition{name: ElementName::$namepart, elemtype: $etype, multiplicity: ElementMultiplicity::$mult, ordered: $ordered, splittable: $splittable, restrict_std: StdRestrict::$stdrestrict, docstring: $docid}
+    };
+}
+#[cfg(not(feature = "docstrings"))]
+macro_rules! element {
+    ($namepart:ident, $etype:literal, $mult:ident, $ordered:literal, $splittable:ident, $stdrestrict:ident, $docid:expr) => {
+        ElementDefinition{name: ElementName::$namepart, elemtype: $etype, multiplicity: ElementMultiplicity::$mult, ordered: $ordered, splittable: $splittable, restrict_std: StdRestrict::$stdrestrict}
+    };
+}
+
+macro_rules! e {
+    ($idx:literal) => {
+        GroupItem::Element($idx)
+    };
+}
+
+macro_rules! g {
+    ($idx:literal) => {
+        GroupItem::Group($idx)
+    };
+}
+
+
+
+"#,
     );
 
-    let character_types = generate_character_types(autosar_schema)?;
-    generated.write_str(&character_types).unwrap();
+    let character_types = generate_character_types(autosar_schema);
+    generated.push_str(&character_types);
 
-    let SubelementInfo {
-        subelements_array,
-        subelements_index_info,
+    let element_definitions_array = build_elements_info(autosar_schema);
+    let docstring_ids = build_docstrings_info(&element_definitions_array);
+    let GroupsInfo {
         mut versions_array,
         versions_index_info,
-    } = build_subelements_info(autosar_schema)?;
-    generated
-        .write_str(&generate_subelements_array(
-            autosar_schema,
-            &subelements_array,
-        ))
-        .unwrap();
+        groups_array,
+        item_ref_array,
+        item_ref_info,
+    } = build_groups_info(autosar_schema, &element_definitions_array);
+
+    generated.push_str(&generate_element_definitions_array(
+        autosar_schema,
+        &element_definitions_array,
+        &docstring_ids,
+    ));
+
+    generated.push_str(&generate_group_items(&item_ref_array));
+
+    generated.push_str(&generate_groups_array(
+        &groups_array,
+        &item_ref_info,
+        &versions_index_info,
+    ));
 
     let AttributeInfo {
         attributes_array,
         attributes_index_info,
         attr_ver_index_info,
-    } = build_attributes_info(autosar_schema, &mut versions_array)?;
-    generated
-        .write_str(&generate_attributes_array(
-            autosar_schema,
-            &attributes_array,
-        ))
-        .unwrap();
+    } = build_attributes_info(autosar_schema, &mut versions_array);
+    generated.push_str(&generate_attributes_array(
+        autosar_schema,
+        &attributes_array,
+    ));
 
-    generated
-        .write_str(&generate_versions_array(&versions_array))
-        .unwrap();
+    generated.push_str(&generate_versions_array(&versions_array));
 
-    generated
-        .write_str(&generate_element_types(
-            autosar_schema,
-            subelements_index_info,
-            versions_index_info,
-            attributes_index_info,
-            attr_ver_index_info,
-        )?)
-        .unwrap();
+    generated.push_str(&generate_element_types(
+        autosar_schema,
+        &attributes_index_info,
+        &attr_ver_index_info,
+    ));
+
+    generated.push_str(&generate_element_docstrings(&docstring_ids));
 
     use std::io::Write;
     let mut file = File::create("gen/specification.rs").unwrap();
     file.write_all(generated.as_bytes()).unwrap();
-
-    Ok(())
 }
 
-pub(crate) fn generate_character_types(
-    autosar_schema: &AutosarDataTypes,
-) -> Result<String, String> {
+pub(crate) fn generate_character_types(autosar_schema: &AutosarDataTypes) -> String {
     let mut generated = String::new();
 
     let regexes: FxHashMap<String, String> = VALIDATOR_REGEX_MAPPING
         .iter()
-        .map(|(regex, name)| (regex.to_string(), name.to_string()))
+        .map(|(regex, name)| ((*regex).to_string(), (*name).to_string()))
         .collect();
 
     let mut ctnames: Vec<&String> = autosar_schema.character_types.keys().collect();
@@ -313,7 +372,7 @@ pub(crate) fn generate_character_types(
         ctnames.len()
     )
     .unwrap();
-    for ctname in ctnames.iter() {
+    for ctname in &ctnames {
         let chtype = autosar_schema.character_types.get(*ctname).unwrap();
 
         let chdef = match chtype {
@@ -330,7 +389,7 @@ pub(crate) fn generate_character_types(
                 // }
                 let regex_validator_name = regexes
                     .get(&fullmatch_pattern)
-                    .expect(&format!("missing regex: {fullmatch_pattern}"));
+                    .unwrap_or_else(|| panic!("missing regex: {fullmatch_pattern}"));
                 format!(
                     r#"CharacterDataSpec::Pattern{{check_fn: {regex_validator_name}, regex: r"{pattern}", max_length: {max_length:?}}}"#
                 )
@@ -374,28 +433,91 @@ pub(crate) fn generate_character_types(
         "pub(crate) const REFERENCE_TYPE_IDX: u16 = {reference_type_idx};\n"
     ));
 
-    Ok(generated)
+    generated
 }
 
-fn build_subelements_info(autosar_schema: &AutosarDataTypes) -> Result<SubelementInfo, String> {
-    let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
-    let mut subelements_array: Vec<ElementCollectionItem> = Vec::new();
-    let mut subelements_index_info = FxHashMap::default();
+fn build_elements_info(autosar_schema: &AutosarDataTypes) -> Vec<SimpleElement> {
+    // make a hashset of all elements to eliminate any duplicates
+    let all_elements: HashSet<SimpleElement> = autosar_schema
+        .group_types
+        .values()
+        .flat_map(|group| {
+            group.items().iter().filter_map(|item| match item {
+                ElementCollectionItem::Element(element) => Some(SimpleElement::from(element)),
+                ElementCollectionItem::GroupRef(_) => None,
+            })
+        })
+        .collect();
+    let mut element_definitions_array: Vec<SimpleElement> = all_elements.into_iter().collect();
+    element_definitions_array.sort_by(|e1, e2| {
+        e1.name
+            .cmp(&e2.name)
+            .then(e1.typeref.cmp(&e2.typeref))
+            .then(e1.docstring.cmp(&e2.docstring))
+            .then(e1.ordered.cmp(&e2.ordered))
+            .then(e1.splittable.cmp(&e2.splittable))
+            .then(e1.restrict_std.cmp(&e2.restrict_std))
+    });
+
+    // create an element definition for the AUTOSAR element - the xsd files contain this info, but it is lost before we get here
+    element_definitions_array.insert(
+        0,
+        SimpleElement {
+            name: String::from("AUTOSAR"),
+            typeref: String::from("AR:AUTOSAR"),
+            amount: ElementAmount::One,
+            splittable: true,
+            ordered: false,
+            restrict_std: XsdRestrictToStandard::NotSet,
+            docstring: None,
+        },
+    );
+    element_definitions_array
+}
+
+fn build_docstrings_info(element_definitions_array: &[SimpleElement]) -> FxHashMap<String, usize> {
+    // first, put all docstrings into a HashSet to elimitate duplicates
+    let docstrings: HashSet<String> = element_definitions_array
+        .iter()
+        .filter_map(|e| e.docstring.clone())
+        .collect();
+    // transform the HashSet into a Vec and sort the list
+    let mut docstrings: Vec<String> = docstrings.into_iter().collect();
+    docstrings.sort();
+    // enable lookup of entries by transferring iverything into a HashMap<docstring, position>
+
+    docstrings
+        .into_iter()
+        .enumerate()
+        .map(|(idx, ds)| (ds, idx))
+        .collect()
+}
+
+fn build_groups_info(
+    autosar_schema: &AutosarDataTypes,
+    element_definitions_array: &[SimpleElement],
+) -> GroupsInfo {
+    let mut groups_array: Vec<Group> = Vec::new();
+    //let mut groups_index_info = FxHashMap::default();
     let mut versions_array = Vec::new();
     let mut versions_index_info: FxHashMap<String, usize> = FxHashMap::default();
+    let mut item_ref_array: Vec<GroupItem> = vec![];
+    let mut item_ref_info: FxHashMap<String, usize> = FxHashMap::default();
 
-    // sort the element type names so that the element types with the most sub elements are first
-    elemtypenames
-        .sort_by(|k1, k2| cmp_elemtypenames_subelems(k1, k2, &autosar_schema.element_types));
+    let elem_idx: FxHashMap<SimpleElement, usize> = element_definitions_array
+        .iter()
+        .enumerate()
+        .map(|(pos, elem)| (elem.clone(), pos))
+        .collect();
 
-    for etypename in elemtypenames {
-        //let elemtype = autosar_schema.element_types.get(etypename).unwrap();
-        if let Some(items) = autosar_schema
-            .element_types
-            .get(etypename)
-            .and_then(|e| e.collection())
-            .map(|ec| ec.items())
-        {
+    // sort the group type names so that the element types with the most sub elements are first
+    let mut grptypenames: Vec<&String> = autosar_schema.group_types.keys().collect();
+    grptypenames.sort_by(|k1, k2| cmp_grouptypenames_subelems(k1, k2, &autosar_schema.group_types));
+
+    // iterate over the groups according to the sorted type name order
+    for grptypename in grptypenames {
+        if let Some(group) = autosar_schema.group_types.get(grptypename) {
+            let items = group.items();
             if !items.is_empty() {
                 // build a list of versions from the list of items
                 let item_versions: Vec<usize> = items
@@ -416,67 +538,74 @@ fn build_subelements_info(autosar_schema: &AutosarDataTypes) -> Result<Subelemen
                     .find(|pos| versions_array[*pos..].starts_with(&item_versions))
                 {
                     // exact sequence was found, store the position of the existing data
-                    versions_index_info.insert(etypename.to_owned(), existing_version_position);
+                    versions_index_info.insert(grptypename.to_owned(), existing_version_position);
                 } else {
                     // the exact sequence was not found, append it to the end of versions_array and store the position
-                    versions_index_info.insert(etypename.to_owned(), versions_array.len());
+                    versions_index_info.insert(grptypename.to_owned(), versions_array.len());
                     versions_array.extend(item_versions.iter());
                 }
 
-                // create a copy of the items and strip the version_info from the copied items
-                // the version info is handled separately and this makes it more likely that identical sequences can be found
-                let mut items_copy = items.clone();
-                items_copy.iter_mut().for_each(|it| {
-                    if let ElementCollectionItem::Element(Element { version_info, .. }) = it {
-                        *version_info = 0;
-                    }
-                });
-                // as for the versions above, try to find the exact sequene of items in the overall list of subelements
-                if let Some(existing_position) = subelements_array
+                // try to reuse group item lists
+                let grpitems: Vec<GroupItem> = items
+                    .iter()
+                    .map(|item| match item {
+                        ElementCollectionItem::Element(element) => GroupItem::ElementRef(
+                            *elem_idx.get(&SimpleElement::from(element)).unwrap(),
+                        ),
+
+                        ElementCollectionItem::GroupRef(group_ref) => {
+                            GroupItem::GroupRef(group_ref.clone())
+                        }
+                    })
+                    .collect();
+                if let Some(existing_position) = item_ref_array
                     .iter()
                     .enumerate()
-                    .filter(|(_, ec)| *ec == &items_copy[0])
+                    .filter(|(_, item)| **item == grpitems[0])
                     .map(|(pos, _)| pos)
-                    .find(|pos| subelements_array[*pos..].starts_with(&items_copy))
+                    .find(|pos| item_ref_array[*pos..].starts_with(&grpitems))
                 {
-                    subelements_index_info.insert(
-                        etypename.to_owned(),
-                        (existing_position, existing_position + items.len()),
-                    );
+                    item_ref_info.insert(grptypename.clone(), existing_position);
                 } else {
-                    subelements_index_info.insert(
-                        etypename.to_owned(),
-                        (
-                            subelements_array.len(),
-                            subelements_array.len() + items.len(),
-                        ),
-                    );
-                    subelements_array.append(&mut items_copy);
+                    item_ref_info.insert(grptypename.clone(), item_ref_array.len());
+                    item_ref_array.extend(grpitems.iter().cloned());
                 }
+
+                let newgroup = match group {
+                    ElementCollection::Choice { amount, .. } => Group::Choice {
+                        name: grptypename.clone(),
+                        items: grpitems,
+                        amount: *amount,
+                    },
+                    ElementCollection::Sequence { .. } => Group::Sequence {
+                        name: grptypename.clone(),
+                        items: grpitems,
+                    },
+                };
+                groups_array.push(newgroup);
             } else {
                 // number of subelements = 0
-                subelements_index_info.insert(etypename.to_owned(), (0, 0));
-                versions_index_info.insert(etypename.to_owned(), 0);
+                versions_index_info.insert(grptypename.to_owned(), 0);
+                item_ref_info.insert(grptypename.clone(), 0);
             }
-        } else {
-            // no subelement info present
-            subelements_index_info.insert(etypename.to_owned(), (0, 0));
-            versions_index_info.insert(etypename.to_owned(), 0);
         }
     }
 
-    Ok(SubelementInfo {
-        subelements_array,
-        subelements_index_info,
+    groups_array.sort_by(|grp1, grp2| grp1.name().cmp(grp2.name()));
+
+    GroupsInfo {
+        groups_array,
         versions_array,
         versions_index_info,
-    })
+        item_ref_array,
+        item_ref_info,
+    }
 }
 
 fn build_attributes_info(
     autosar_schema: &AutosarDataTypes,
     versions_array: &mut Vec<usize>,
-) -> Result<AttributeInfo, String> {
+) -> AttributeInfo {
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     let mut attributes_array = Vec::new();
     let mut attributes_index_info = FxHashMap::default();
@@ -489,7 +618,7 @@ fn build_attributes_info(
         if let Some(attrs) = autosar_schema
             .element_types
             .get(etypename)
-            .and_then(|e| e.attributes())
+            .map(ElementDataType::attributes)
         {
             if !attrs.is_empty() {
                 // build a list of versions from the list of items
@@ -547,16 +676,17 @@ fn build_attributes_info(
         }
     }
 
-    Ok(AttributeInfo {
+    AttributeInfo {
         attributes_array,
         attributes_index_info,
         attr_ver_index_info,
-    })
+    }
 }
 
-fn generate_subelements_array(
+fn generate_element_definitions_array(
     autosar_schema: &AutosarDataTypes,
-    sub_elements: &[ElementCollectionItem],
+    elements: &[SimpleElement],
+    docstring_ids: &FxHashMap<String, usize>,
 ) -> String {
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     elemtypenames.sort();
@@ -566,10 +696,67 @@ fn generate_subelements_array(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\npub(crate) static SUBELEMENTS: [SubElement; {}] = [\n",
-        sub_elements.len()
+        "\npub(crate) static ELEMENTS: [ElementDefinition; {}] = [\n",
+        elements.len()
     );
-    generated.push_str(&build_sub_elements_string(sub_elements, &elemtype_nameidx));
+    for elem in elements {
+        generated.push_str(&build_element_string(
+            elem,
+            &elemtype_nameidx,
+            docstring_ids,
+        ));
+    }
+    generated.push_str("];\n");
+
+    generated
+}
+
+fn generate_group_items(items: &[GroupItem]) -> String {
+    let mut generated = format!(
+        "\npub(crate) static GROUP_ITEMS: [GroupItem; {}] = [\n",
+        items.len()
+    );
+    for item in items {
+        generated.push_str(&match item {
+            GroupItem::ElementRef(idx) => format!("e!({idx}), "),
+            GroupItem::GroupRef(idx) => format!("g!({idx}), "),
+        });
+    }
+    generated.push_str("];\n");
+    generated
+}
+
+fn generate_groups_array(
+    groups: &[Group],
+    item_info: &FxHashMap<String, usize>,
+    versions_index_info: &FxHashMap<String, usize>,
+) -> String {
+    let mut generated = format!(
+        "\npub(crate) static GROUPS: [GroupDefinition; {}] = [\n",
+        groups.len()
+    );
+    for group in groups {
+        generated.push_str(&match group {
+            Group::Choice {
+                name,
+                items,
+                amount,
+            } => {
+                let item_idx = item_info.get(name).unwrap();
+                let ver_idx = versions_index_info.get(name).unwrap();
+                if *amount == ElementAmount::Any {
+                    format!("    GroupDefinition::Bag{{items: {item_idx}, ver_info: {ver_idx}, item_count: {}}},\n", items.len())
+                } else {
+                    format!("    GroupDefinition::Choice{{items: {item_idx}, ver_info: {ver_idx}, item_count: {}}},\n", items.len())
+                }
+            }
+            Group::Sequence { name, items } => {
+                let item_idx = item_info.get(name).unwrap();
+                let ver_idx = versions_index_info.get(name).unwrap();
+                format!("    GroupDefinition::Sequence{{items: {item_idx}, ver_info: {ver_idx}, item_count: {}}},\n", items.len())
+            }
+        });
+    }
     generated.push_str("];\n");
 
     generated
@@ -617,14 +804,14 @@ fn generate_versions_array(versions_array: &[usize]) -> String {
 
 fn generate_element_types(
     autosar_schema: &AutosarDataTypes,
-    subelements_index_info: FxHashMap<String, (usize, usize)>,
-    subelements_ver_index_info: FxHashMap<String, usize>,
-    attributes_index_info: FxHashMap<String, (usize, usize)>,
-    attr_ver_index_info: FxHashMap<String, usize>,
-) -> Result<String, String> {
+    attributes_index_info: &FxHashMap<String, (usize, usize)>,
+    attr_ver_index_info: &FxHashMap<String, usize>,
+) -> String {
     let mut generated = String::new();
     let mut elemtypes = String::new();
 
+    let mut grouptypenames: Vec<&String> = autosar_schema.group_types.keys().collect();
+    grouptypenames.sort();
     let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
     elemtypenames.sort();
     let mut chartypenames: Vec<&String> = autosar_schema.character_types.keys().collect();
@@ -637,13 +824,9 @@ fn generate_element_types(
         .filter_map(|(_, et)| {
             // filtering to get only those which have a DEST attribute
             et.attributes()
-                .map(|attrlist| {
-                    attrlist
-                        .iter()
-                        .find(|attr| attr.name == "DEST")
-                        .map(|attr| &attr.attribute_type) // map to provide only the attribute_type string
-                })
-                .flatten() // Option<Option<attr type name>> -> Option<attr type name>
+                .iter()
+                .find(|attr| attr.name == "DEST")
+                .map(|attr| &attr.attr_type) // map to provide only the attribute_type string
                 .and_then(|attrtype| {
                     // with the attribute type string, get the CharacterDataType of the attribute from the schema
                     autosar_schema
@@ -663,6 +846,12 @@ fn generate_element_types(
         .map(|(name, _)| name.to_owned())
         .collect();
 
+    // map each group type name to an index
+    let grouptype_nameidx: FxHashMap<&str, usize> = grouptypenames
+        .iter()
+        .enumerate()
+        .map(|(idx, name)| (&***name, idx))
+        .collect();
     // map each element type name to an index
     let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
         .iter()
@@ -681,8 +870,8 @@ fn generate_element_types(
     let mut attribute_definitions: FxHashMap<String, String> = FxHashMap::default();
 
     // empty element list and empty attribute list don't need a named variable, so are treated specially here
-    element_definitions.insert("".to_string(), "[]".to_string());
-    attribute_definitions.insert("".to_string(), "[]".to_string());
+    element_definitions.insert(String::new(), "[]".to_string());
+    attribute_definitions.insert(String::new(), "[]".to_string());
 
     // build a mapping from type names to elements which use that type
     let element_names_of_typename = build_elementnames_of_type_list(autosar_schema);
@@ -695,12 +884,9 @@ fn generate_element_types(
     .unwrap();
     for (idx, etypename) in elemtypenames.iter().enumerate() {
         let elemtype = autosar_schema.element_types.get(*etypename).unwrap();
-        let mode = calc_element_mode(elemtype);
-        let (ordered, splittable) = get_element_attributes(elemtype);
+        let mode = calc_element_mode(autosar_schema, elemtype);
+        //let (ordered, splittable) = get_element_attributes(elemtype);
 
-        let (subelem_limit_low, subelem_limit_high) =
-            subelements_index_info.get(*etypename).unwrap();
-        let subelement_ver_info_low = subelements_ver_index_info.get(*etypename).unwrap();
         let (attrs_limit_low, attrs_limit_high) = attributes_index_info.get(*etypename).unwrap();
         let attrs_ver_info_low = attr_ver_index_info.get(*etypename).unwrap();
         let chartype = if let Some(name) = elemtype.basetype() {
@@ -721,21 +907,24 @@ fn generate_element_types(
                 .filter_map(|xtn| {
                     ref_attribute_types
                         .get(xtn)
-                        .and_then(|name| Some(format!("EnumItem::{}", name_to_identifier(name))))
+                        .map(|name| format!("EnumItem::{}", name_to_identifier(name)))
                 })
                 .collect();
             namevec.sort();
             namevec.join(", ")
         } else {
-            "".to_string()
+            String::new()
         };
+
+        let groupidx: Option<usize> = elemtype
+            .group_ref()
+            .map(|groupref| *grouptype_nameidx.get(&*groupref).unwrap());
 
         writeln!(
             elemtypes,
-            "    /* {idx:4} */ ElementSpec {{sub_elements: ({subelem_limit_low}, {subelem_limit_high}), \
-                            sub_element_ver: {subelement_ver_info_low}, \
+            "    /* {idx:4} */ ElementSpec {{group: {groupidx:?}, \
                             attributes: ({attrs_limit_low}, {attrs_limit_high}), attributes_ver: {attrs_ver_info_low}, \
-                            character_data: {chartype}, mode: {mode}, ordered: {ordered}, splittable: {splittable}, ref_by: &[{refstring}]}}, // {infostring}"
+                            character_data: {chartype}, mode: {mode}, ref_by: &[{refstring}]}}, // {infostring}"
         )
         .unwrap();
     }
@@ -750,30 +939,28 @@ fn generate_element_types(
 
     generated.write_str(&elemtypes).unwrap();
 
-    Ok(generated)
+    generated
 }
 
 fn build_elementnames_of_type_list(
     autosar_schema: &AutosarDataTypes,
 ) -> FxHashMap<String, HashSet<String>> {
     let mut map = FxHashMap::default();
-    map.reserve(autosar_schema.element_types.len());
+    map.reserve(autosar_schema.group_types.len());
 
     map.insert("AR:AUTOSAR".to_string(), HashSet::new());
     map.get_mut("AR:AUTOSAR")
         .unwrap()
         .insert("AUTOSAR".to_string());
 
-    for definition in autosar_schema.element_types.values() {
-        if let Some(ec) = definition.collection() {
-            for item in ec.items() {
-                if let ElementCollectionItem::Element(Element { name, typeref, .. }) = item {
-                    if let Some(entry) = map.get_mut(typeref) {
-                        entry.insert(name.to_string());
-                    } else {
-                        map.insert(typeref.to_string(), HashSet::new());
-                        map.get_mut(typeref).unwrap().insert(name.to_string());
-                    }
+    for group in autosar_schema.group_types.values() {
+        for item in group.items() {
+            if let ElementCollectionItem::Element(Element { name, typeref, .. }) = item {
+                if let Some(entry) = map.get_mut(typeref) {
+                    entry.insert(name.to_string());
+                } else {
+                    map.insert(typeref.to_string(), HashSet::new());
+                    map.get_mut(typeref).unwrap().insert(name.to_string());
                 }
             }
         }
@@ -781,31 +968,52 @@ fn build_elementnames_of_type_list(
     map
 }
 
-fn build_sub_elements_string(
-    sub_elements: &[ElementCollectionItem],
+fn build_element_string(
+    elem: &SimpleElement,
     elemtype_nameidx: &FxHashMap<&str, usize>,
+    docstring_ids: &FxHashMap<String, usize>,
 ) -> String {
-    let mut sub_element_strings: Vec<String> = Vec::new();
-    for ec_item in sub_elements {
-        match ec_item {
-            ElementCollectionItem::Element(elem) => {
-                sub_element_strings.push(
-                    format!("    SubElement::Element{{name: ElementName::{}, elemtype: {}, multiplicity: ElementMultiplicity::{:?}}}",
-                        name_to_identifier(&elem.name),
-                        elemtype_nameidx.get(&*elem.typeref).unwrap(),
-                        elem.amount,
-                    )
-                );
-            }
-            ElementCollectionItem::GroupRef(group) => {
-                sub_element_strings.push(format!(
-                    "    SubElement::Group{{groupid: {}}}",
-                    elemtype_nameidx.get(&**group).unwrap()
-                ));
-            }
-        }
+    // let mut sub_element_strings: Vec<String> = Vec::new();
+    let elem_docstring_id = elem
+        .docstring
+        .as_ref()
+        .and_then(|ds| docstring_ids.get(ds))
+        .copied();
+    let restrict_txt = restrict_std_to_text(elem.restrict_std);
+    format!(
+        "    element!({}, {}, {:?}, {}, {}, {}, {:?}),\n",
+        name_to_identifier(&elem.name),
+        elemtype_nameidx.get(&*elem.typeref).unwrap(),
+        elem.amount,
+        elem.ordered,
+        elem.splittable,
+        restrict_txt,
+        elem_docstring_id,
+    )
+}
+
+fn generate_element_docstrings(docstring_ids: &FxHashMap<String, usize>) -> String {
+    let mut docstrings: Vec<String> = docstring_ids.keys().cloned().collect();
+    docstrings.sort_by(|a, b| docstring_ids.get(a).cmp(&docstring_ids.get(b)));
+
+    let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
+    output.push_str(&format!(
+        "pub(crate) static ELEMENT_DOCSTRINGS: [&'static str; {}] = [\n",
+        docstrings.len()
+    ));
+    for ds in docstrings {
+        output.push_str(&format!("    {ds:?},\n"));
     }
-    sub_element_strings.join(",\n")
+    output.push_str("];\n");
+    output
+}
+
+fn restrict_std_to_text(restrict_std: XsdRestrictToStandard) -> &'static str {
+    match restrict_std {
+        XsdRestrictToStandard::NotSet | XsdRestrictToStandard::Both => "NotRestricted",
+        XsdRestrictToStandard::ClassicPlatform => "ClassicPlatform",
+        XsdRestrictToStandard::AdaptivePlatform => "AdaptivePlatform",
+    }
 }
 
 fn build_attributes_string(
@@ -814,7 +1022,7 @@ fn build_attributes_string(
 ) -> String {
     let mut attr_strings = Vec::new();
     for attr in attrs {
-        let chartype = format!("{}", *chartype_nameidx.get(&*attr.attribute_type).unwrap());
+        let chartype = format!("{}", *chartype_nameidx.get(&*attr.attr_type).unwrap());
 
         attr_strings.push(format!(
             "    (AttributeName::{}, {chartype}, {})",
@@ -825,12 +1033,13 @@ fn build_attributes_string(
     attr_strings.join(",\n")
 }
 
-fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
+fn calc_element_mode(
+    autosar_schema: &AutosarDataTypes,
+    elemtype: &ElementDataType,
+) -> &'static str {
     match elemtype {
-        ElementDataType::ElementsGroup { element_collection }
-        | ElementDataType::Elements {
-            element_collection, ..
-        } => {
+        ElementDataType::Elements { group_ref, .. } => {
+            let element_collection = autosar_schema.group_types.get(group_ref).unwrap();
             if let ElementCollection::Choice { amount, .. } = element_collection {
                 if let ElementAmount::Any = amount {
                     "ContentMode::Bag"
@@ -846,32 +1055,13 @@ fn calc_element_mode(elemtype: &ElementDataType) -> &'static str {
     }
 }
 
-fn get_element_attributes(elemtype: &ElementDataType) -> (bool, usize) {
-    match elemtype {
-        ElementDataType::Elements {
-            ordered,
-            splittable,
-            ..
-        } => (*ordered, *splittable),
-        ElementDataType::ElementsGroup { .. } => (false, 0),
-        ElementDataType::Characters { .. } => (true, 0),
-        ElementDataType::Mixed { .. } => (true, 0),
-    }
-}
-
-fn cmp_elemtypenames_subelems(
+fn cmp_grouptypenames_subelems(
     k1: &str,
     k2: &str,
-    elemtypes: &FxHashMap<String, ElementDataType>,
+    elemtypes: &FxHashMap<String, ElementCollection>,
 ) -> std::cmp::Ordering {
-    let len1 = elemtypes
-        .get(k1)
-        .and_then(|e| e.collection())
-        .map_or(0, |ec| ec.items().len());
-    let len2 = elemtypes
-        .get(k2)
-        .and_then(|e| e.collection())
-        .map_or(0, |ec| ec.items().len());
+    let len1 = elemtypes.get(k1).map(|ec| ec.items().len()).unwrap();
+    let len2 = elemtypes.get(k2).map(|ec| ec.items().len()).unwrap();
 
     match len2.cmp(&len1) {
         std::cmp::Ordering::Less => std::cmp::Ordering::Less,
@@ -887,12 +1077,12 @@ fn cmp_elemtypenames_attrs(
 ) -> std::cmp::Ordering {
     let len1 = elemtypes
         .get(k1)
-        .and_then(|e| e.attributes())
-        .map_or(0, |attrs| attrs.len());
+        .map(ElementDataType::attributes)
+        .map_or(0, std::vec::Vec::len);
     let len2 = elemtypes
         .get(k2)
-        .and_then(|e| e.attributes())
-        .map_or(0, |attrs| attrs.len());
+        .map(ElementDataType::attributes)
+        .map_or(0, std::vec::Vec::len);
 
     match len2.cmp(&len1) {
         std::cmp::Ordering::Less => std::cmp::Ordering::Less,
@@ -905,11 +1095,9 @@ fn generate_enum(
     enum_name: &str,
     enum_docstring: &str,
     item_names: &[&str],
-    disps: Vec<(u32, u32)>,
+    disps: &[(u32, u32)],
 ) -> String {
     let mut generated = String::new();
-    // let disps =
-    //     perfect_hash::make_perfect_hash(item_names, 7);
     let displen = disps.len();
 
     let width = item_names.iter().map(|name| name.len()).max().unwrap();
@@ -919,7 +1107,7 @@ fn generate_enum(
         "use crate::hashfunc;
 
 #[derive(Debug)]
-/// The error type Parse{enum_name}Error is returned when from_str() / parse() fails for {enum_name}
+/// The error type `Parse{enum_name}Error` is returned when `from_str()` / `parse()` fails for `{enum_name}`
 pub struct Parse{enum_name}Error;
 "
     )
@@ -929,20 +1117,21 @@ pub struct Parse{enum_name}Error;
             "#[allow(dead_code, non_camel_case_types)]
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 #[repr(u16)]
+#[non_exhaustive]
 ",
         )
         .unwrap();
     writeln!(generated, "/// {enum_docstring}\npub enum {enum_name} {{").unwrap();
     let mut hash_sorted_item_names = item_names.to_owned();
     hash_sorted_item_names.sort_by(|k1, k2| {
-        perfect_hash::get_index(k1, &disps, item_names.len()).cmp(&perfect_hash::get_index(
+        perfect_hash::get_index(k1, disps, item_names.len()).cmp(&perfect_hash::get_index(
             k2,
-            &disps,
+            disps,
             item_names.len(),
         ))
     });
     for item_name in item_names {
-        let idx = perfect_hash::get_index(item_name, &disps, item_names.len());
+        let idx = perfect_hash::get_index(item_name, disps, item_names.len());
         let ident = name_to_identifier(item_name);
         writeln!(generated, "    /// {item_name}").unwrap();
         writeln!(generated, "    {ident:width$}= {idx},").unwrap();
@@ -961,7 +1150,7 @@ impl {enum_name} {{
         static DISPLACEMENTS: [(u16, u16); {displen}] = {disps:?};
         let (g, f1, f2) = hashfunc(input);
         let (d1, d2) = DISPLACEMENTS[(g % {displen}) as usize];
-        let item_idx = (d2 as u32).wrapping_add(f1.wrapping_mul(d1 as u32)).wrapping_add(f2) as usize % {length};
+        let item_idx = u32::from(d2).wrapping_add(f1.wrapping_mul(u32::from(d1))).wrapping_add(f2) as usize % {length};
         if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
             return Err(Parse{enum_name}Error);
         }}
@@ -973,6 +1162,7 @@ impl {enum_name} {{
     /// get the str corresponding to an item
     ///
     /// The returned &str has static lifetime, becasue it is a reference to an entry in a list of constants
+    #[must_use]
     pub fn to_str(&self) -> &'static str {{
         {enum_name}::STRING_TABLE[*self as usize]
     }}
@@ -1034,6 +1224,28 @@ fn name_to_identifier(name: &str) -> String {
     }
 
     result
+}
+
+impl Group {
+    fn name(&self) -> &str {
+        match self {
+            Group::Choice { name, .. } | Group::Sequence { name, .. } => name,
+        }
+    }
+}
+
+impl From<&Element> for SimpleElement {
+    fn from(element: &Element) -> Self {
+        Self {
+            name: element.name.clone(),
+            typeref: element.typeref.clone(),
+            amount: element.amount,
+            splittable: element.splittable,
+            ordered: element.ordered,
+            restrict_std: element.restrict_std,
+            docstring: element.docstring.clone(),
+        }
+    }
 }
 
 // map a regex to a validation finction name

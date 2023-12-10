@@ -4,19 +4,19 @@ use std::{num::Wrapping, ops::BitXor};
 // unlike FxHasher, this code can't do 64bit ops, because the generated
 // perfect hash table should also work if compiled as 32 bit
 fn hashfunc(mut data: &[u8]) -> (u32, u32, u32) {
-    const HASHCONST1: u32 = 0x541C69B2; // these 4 constant values are not special, just random values
-    const HASHCONST2: u32 = 0x3B17161B;
+    const HASHCONST1: u32 = 0x541C_69B2; // these 4 constant values are not special, just random values
+    const HASHCONST2: u32 = 0x3B17_161B;
 
-    let mut f1 = 0x33143C63u32;
-    let mut f2 = 0x88B0B21Eu32;
+    let mut f1 = 0x3314_3C63_u32;
+    let mut f2 = 0x88B0_B21E_u32;
     while data.len() >= 4 {
-        let val = u32::from_ne_bytes(data[..4].try_into().unwrap()) as u32;
+        let val = u32::from_ne_bytes(data[..4].try_into().unwrap());
         f1 = f1.rotate_left(5).bitxor(val).wrapping_mul(HASHCONST1);
         f2 = f2.rotate_left(6).bitxor(val).wrapping_mul(HASHCONST2);
         data = &data[4..];
     }
     if data.len() >= 2 {
-        let val = u16::from_ne_bytes(data[..2].try_into().unwrap()) as u32;
+        let val = u32::from(u16::from_ne_bytes(data[..2].try_into().unwrap()));
         f1 = f1.rotate_left(5).bitxor(val).wrapping_mul(HASHCONST1);
         f2 = f2.rotate_left(6).bitxor(val).wrapping_mul(HASHCONST2);
         data = &data[2..];
@@ -24,11 +24,11 @@ fn hashfunc(mut data: &[u8]) -> (u32, u32, u32) {
     if !data.is_empty() {
         f1 = f1
             .rotate_left(5)
-            .bitxor(data[0] as u32)
+            .bitxor(u32::from(data[0]))
             .wrapping_mul(HASHCONST1);
         f2 = f2
             .rotate_left(6)
-            .bitxor(data[0] as u32)
+            .bitxor(u32::from(data[0]))
             .wrapping_mul(HASHCONST2);
     }
     let g = f1.bitxor(f2);
