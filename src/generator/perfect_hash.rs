@@ -74,6 +74,7 @@ pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u3
     buckets.sort_by(|a, b| a.keys.len().cmp(&b.keys.len()).reverse());
 
     let table_len = hashes.len();
+    let table_len_u32 = u32::try_from(table_len).unwrap();
     let mut map = vec![None; table_len];
     let mut disps = vec![(0u32, 0u32); buckets_len];
 
@@ -93,13 +94,13 @@ pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u3
     let mut values_to_add = vec![];
 
     'buckets: for bucket in &buckets {
-        for d1 in 0..(table_len as u32) {
-            'disps: for d2 in 0..(table_len as u32) {
+        for d1 in 0..table_len_u32 {
+            'disps: for d2 in 0..table_len_u32 {
                 values_to_add.clear();
                 generation += 1;
 
                 for &key in &bucket.keys {
-                    let idx = (displace(hashes[key].1, hashes[key].2, d1, d2) % (table_len as u32))
+                    let idx = (displace(hashes[key].1, hashes[key].2, d1, d2) % table_len_u32)
                         as usize;
                     if map[idx].is_some() || try_map[idx] == generation {
                         continue 'disps;

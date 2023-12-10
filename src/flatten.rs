@@ -230,11 +230,7 @@ fn flatten_simple_content(
             &simple_content.extension.attribute_groups,
         )?;
         match basetype {
-            XsdType::Base(_) => Ok(ElementDataType::Characters {
-                attributes,
-                basetype: simple_content.extension.basetype.clone(),
-            }),
-            XsdType::Simple(_) => Ok(ElementDataType::Characters {
+            XsdType::Base(_) | XsdType::Simple(_) => Ok(ElementDataType::Characters {
                 attributes,
                 basetype: simple_content.extension.basetype.clone(),
             }),

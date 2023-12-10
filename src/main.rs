@@ -6,6 +6,7 @@ use std::path::Path;
 
 use xsd::{Xsd, XsdRestrictToStandard};
 
+mod dedup;
 mod flatten;
 mod generator;
 mod merge;
@@ -251,171 +252,12 @@ fn core() -> Result<(), String> {
         sanity_check(&autosar_schema);
     }
 
-    dedup_types(&mut autosar_schema);
+    dedup::dedup_types(&mut autosar_schema);
     sanity_check(&autosar_schema);
 
     generator::generate(&XSD_CONFIG, &autosar_schema);
 
     Ok(())
-}
-
-fn dedup_types(autosar_types: &mut AutosarDataTypes) {
-    // replace repeatedly - types may become identical when types they depend on are deduplicated
-    loop {
-        let mut group_typenames = autosar_types
-            .group_types
-            .keys()
-            .cloned()
-            .collect::<Vec<String>>();
-        group_typenames.sort_by(dedup_keycmp);
-        let mut elem_typenames = autosar_types
-            .element_types
-            .keys()
-            .cloned()
-            .collect::<Vec<String>>();
-        elem_typenames.sort_by(dedup_keycmp);
-        let mut char_typenames = autosar_types
-            .character_types
-            .keys()
-            .cloned()
-            .collect::<Vec<String>>();
-        char_typenames.sort_by(dedup_keycmp);
-
-        let mut group_replacements = FxHashMap::default();
-        let mut elem_replacements = FxHashMap::default();
-        let mut char_replacements = FxHashMap::default();
-
-        // build a table of group types to replace by another identical type
-        for idx1 in 0..(group_typenames.len() - 1) {
-            let typename1 = &group_typenames[idx1];
-            if group_replacements.get(typename1).is_none() {
-                for typename2 in group_typenames.iter().skip(idx1 + 1) {
-                    if group_replacements.get(typename2).is_none()
-                        && autosar_types.group_types.get(typename1)
-                            == autosar_types.group_types.get(typename2)
-                    {
-                        group_replacements.insert(typename2.to_owned(), typename1.to_owned());
-                    }
-                }
-            }
-        }
-        // build a table of element types to replace by another identical type
-        for idx1 in 0..(elem_typenames.len() - 1) {
-            let typename1 = &elem_typenames[idx1];
-            if elem_replacements.get(typename1).is_none() {
-                for typename2 in elem_typenames.iter().skip(idx1 + 1) {
-                    if elem_replacements.get(typename2).is_none()
-                        && autosar_types.element_types.get(typename1)
-                            == autosar_types.element_types.get(typename2)
-                    {
-                        elem_replacements.insert(typename2.to_owned(), typename1.to_owned());
-                    }
-                }
-            }
-        }
-        // build a table of character types to replace by another identical type
-        for idx1 in 0..(char_typenames.len() - 1) {
-            let typename1 = &char_typenames[idx1];
-            if char_replacements.get(typename1).is_none() {
-                for typename2 in char_typenames.iter().skip(idx1 + 1) {
-                    if char_replacements.get(typename2).is_none()
-                        && autosar_types.character_types.get(typename1)
-                            == autosar_types.character_types.get(typename2)
-                    {
-                        char_replacements.insert(typename2.to_owned(), typename1.to_owned());
-                    }
-                }
-            }
-        }
-
-        // perform replacements in each group
-        for group_type in autosar_types.group_types.values_mut() {
-            match group_type {
-                ElementCollection::Choice { sub_elements, .. }
-                | ElementCollection::Sequence { sub_elements, .. } => {
-                    for ec_item in sub_elements {
-                        match ec_item {
-                            ElementCollectionItem::Element(Element {
-                                typeref: element_typeref,
-                                ..
-                            }) => {
-                                if let Some(rep) = elem_replacements.get(element_typeref) {
-                                    *element_typeref = rep.to_owned();
-                                }
-                            }
-                            ElementCollectionItem::GroupRef(group_ref) => {
-                                if let Some(rep) = group_replacements.get(group_ref) {
-                                    *group_ref = rep.to_owned();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        for artype in autosar_types.element_types.values_mut() {
-            // replace group_refs inside an element type
-            match artype {
-                ElementDataType::Elements { group_ref, .. }
-                | ElementDataType::Mixed { group_ref, .. } => {
-                    if let Some(rep) = group_replacements.get(group_ref) {
-                        *group_ref = rep.to_owned();
-                    }
-                }
-                _ => {}
-            }
-            // replace character types for attributes
-            match artype {
-                ElementDataType::Elements { attributes, .. }
-                | ElementDataType::Characters { attributes, .. }
-                | ElementDataType::Mixed { attributes, .. } => {
-                    for attr in attributes {
-                        if let Some(rep) = char_replacements.get(&attr.attr_type) {
-                            attr.attr_type = rep.to_owned();
-                        }
-                    }
-                }
-            }
-            // replace character data type for character content
-            match artype {
-                ElementDataType::Characters { basetype, .. }
-                | ElementDataType::Mixed { basetype, .. } => {
-                    if let Some(rep) = char_replacements.get(basetype) {
-                        *basetype = rep.to_owned();
-                    }
-                }
-                _ => {}
-            }
-        }
-        // remove obsolete group types
-        for name in group_replacements.keys() {
-            autosar_types.group_types.remove(name);
-        }
-        // remove obsolete element types
-        for name in elem_replacements.keys() {
-            autosar_types.element_types.remove(name);
-        }
-        //remove obsolete character data types
-        for name in char_replacements.keys() {
-            autosar_types.character_types.remove(name);
-        }
-
-        // done if no replacements werre foud in this iteration
-        if group_replacements.is_empty()
-            && elem_replacements.is_empty()
-            && char_replacements.is_empty()
-        {
-            break;
-        }
-    }
-}
-
-fn dedup_keycmp(key1: &String, key2: &String) -> std::cmp::Ordering {
-    match key1.len().cmp(&key2.len()) {
-        std::cmp::Ordering::Equal => key1.cmp(key2),
-        nonequal => nonequal,
-    }
 }
 
 fn sanity_check(autosar_types: &AutosarDataTypes) {
