@@ -139,7 +139,7 @@ fn replace_element_chartypes(
                     *basetype = rep.to_owned();
                 }
             }
-            _ => {}
+            ElementDataType::Elements { .. } => {}
         }
     }
 }
@@ -188,7 +188,7 @@ fn replace_element_grouptypes(
                     *group_ref = rep.to_owned();
                 }
             }
-            _ => {}
+            ElementDataType::Characters { .. } => {}
         }
     }
 }

@@ -32,13 +32,13 @@ pub(crate) struct Element {
     pub(crate) typeref: String,
     pub(crate) amount: ElementAmount,
     pub(crate) version_info: usize,
-    pub(crate) splittable: bool,
+    pub(crate) splittable_ver: usize,
     pub(crate) ordered: bool,
     pub(crate) restrict_std: XsdRestrictToStandard,
     pub(crate) docstring: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 enum ElementAmount {
     ZeroOrOne,
     One,
@@ -70,6 +70,7 @@ pub(crate) enum ElementDataType {
         group_ref: String,
         attributes: Vec<Attribute>,
         xsd_typenames: HashSet<String>,
+        // mm_class: Option<String>,
     },
     Characters {
         attributes: Vec<Attribute>,
@@ -79,6 +80,7 @@ pub(crate) enum ElementDataType {
         group_ref: String,
         attributes: Vec<Attribute>,
         basetype: String,
+        // mm_class: Option<String>,
     },
 }
 
@@ -230,7 +232,7 @@ fn core() -> Result<(), String> {
             let file = File::open(filepath).unwrap();
             println!("loading {}", xsd_file_info.name);
             let xsd = Xsd::load(file, 1 << index)?;
-            // println!("\n\n######################\nXSD {}:\n{xsd:#?}\n##################\n\n", xsd_file_info.desc);
+
             autosar_schema_version.push((xsd_file_info.desc, flatten::flatten_schema(&xsd)?));
         } else {
             println!(
@@ -242,7 +244,6 @@ fn core() -> Result<(), String> {
     }
 
     let (base_name, mut autosar_schema) = autosar_schema_version.pop().unwrap();
-    //let mut merged = HashMap::new();
     sanity_check(&autosar_schema);
 
     println!("merge base: {base_name}");
@@ -260,12 +261,20 @@ fn core() -> Result<(), String> {
     Ok(())
 }
 
+/// sanity check: see if all references are still ok after merging / deduplication
 fn sanity_check(autosar_types: &AutosarDataTypes) {
     for (groupname, group) in &autosar_types.group_types {
         for item in group.items() {
-            if let ElementCollectionItem::Element(elem) = item {
-                if autosar_types.element_types.get(&elem.typeref).is_none() {
-                    println!("sanity check failed - in group [{groupname}] element <{elem:#?}> references non-existent type [{}]", elem.typeref);
+            match item {
+                ElementCollectionItem::Element(elem) => {
+                    if autosar_types.element_types.get(&elem.typeref).is_none() {
+                        println!("sanity check failed - in group [{groupname}] element <{elem:#?}> references non-existent type [{}]", elem.typeref);
+                    }
+                }
+                ElementCollectionItem::GroupRef(gref) => {
+                    if autosar_types.group_types.get(gref).is_none() {
+                        println!("sanity check failed - in group [{groupname}] group ref {gref} has no target");
+                    }
                 }
             }
         }
@@ -310,14 +319,6 @@ impl ElementDataType {
             ElementDataType::Elements { attributes, .. }
             | ElementDataType::Characters { attributes, .. }
             | ElementDataType::Mixed { attributes, .. } => attributes,
-        }
-    }
-
-    fn xsd_typenames(&self) -> Option<&HashSet<String>> {
-        if let ElementDataType::Elements { xsd_typenames, .. } = self {
-            Some(xsd_typenames)
-        } else {
-            None
         }
     }
 

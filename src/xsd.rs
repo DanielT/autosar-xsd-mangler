@@ -112,7 +112,7 @@ pub(crate) struct XsdComplexType {
     pub(crate) item: XsdComplexTypeItem,
     pub(crate) attribute_groups: Vec<String>,
     pub(crate) mixed_content: bool,
-    pub(crate) category: Option<String>,
+    pub(crate) mm_class: Option<String>,
     pub(crate) doctext: Option<String>,
 }
 
@@ -145,6 +145,7 @@ struct StartElementInfo {
 }
 
 impl Xsd {
+    /// load and parse an xsd schema document for the Autosar standard
     pub(crate) fn load(file: File, version_info: usize) -> Result<Xsd, String> {
         let file = BufReader::new(file);
         // let mut parser = EventReader::new(file);
@@ -526,7 +527,7 @@ fn parse_complex_type(
         todo!()
     };
 
-    let category = category_from_comment(comment);
+    let mm_class = mm_class_from_comment(comment);
 
     extend_prev_names(&mut prev_names, attr_name);
 
@@ -599,7 +600,7 @@ fn parse_complex_type(
         item,
         attribute_groups,
         mixed_content,
-        category,
+        mm_class,
         doctext,
     });
 
@@ -1133,14 +1134,13 @@ fn get_next_element(
             } => {
                 if local_name == parent_element {
                     return Ok(None);
-                } else {
-                    return Err(format!(
-                        "Error: found unexpected end tag \"{}\" inside <{}> at {}",
-                        local_name,
-                        parent_element,
-                        parser.position()
-                    ));
                 }
+                return Err(format!(
+                    "Error: found unexpected end tag \"{}\" inside <{}> at {}",
+                    local_name,
+                    parent_element,
+                    parser.position()
+                ));
             }
             XmlEvent::StartDocument { .. } | XmlEvent::EndDocument => {
                 return Err(format!(
@@ -1215,11 +1215,11 @@ fn extend_prev_names(prev_names: &mut Vec<String>, attr_name: Option<&str>) {
     }
 }
 
-fn category_from_comment(comment_opt: Option<String>) -> Option<String> {
+fn mm_class_from_comment(comment_opt: Option<String>) -> Option<String> {
     let comment = comment_opt?;
 
-    let cat = comment.strip_prefix(" complex type for class ")?;
-    Some(cat.to_string())
+    let mm_class = comment.strip_prefix(" complex type for class ")?;
+    Some(mm_class.to_string())
 }
 
 fn get_restrict_to_standard(mm_attributes: &HashMap<String, String>) -> XsdRestrictToStandard {

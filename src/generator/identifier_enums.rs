@@ -2,6 +2,7 @@ use crate::generator::{name_to_identifier, perfect_hash};
 use crate::{AutosarDataTypes, CharacterDataType, ElementCollectionItem, HashSet};
 use std::fmt::Write;
 use std::fs::File;
+use std::io::Write as IoWrite;
 
 pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
     let mut attribute_names = HashSet::new();
@@ -61,7 +62,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
         &element_name_refs,
         &disps,
     );
-    use std::io::Write;
+
     let mut file = File::create("gen/elementname.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
 

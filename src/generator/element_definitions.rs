@@ -1,15 +1,19 @@
 use crate::generator::{name_to_identifier, SimpleElement};
-use crate::{AutosarDataTypes, ElementAmount, ElementCollectionItem, XsdRestrictToStandard};
+use crate::{ElementAmount, ElementCollectionItem, XsdRestrictToStandard};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 
-pub(crate) fn build_elements_info(autosar_schema: &AutosarDataTypes) -> Vec<SimpleElement> {
+use super::MergedElementDataType;
+
+pub(crate) fn build_info(
+    element_types: &FxHashMap<String, MergedElementDataType>,
+) -> Vec<SimpleElement> {
     // make a hashset of all elements to eliminate any duplicates
-    let all_elements: HashSet<SimpleElement> = autosar_schema
-        .group_types
+    let all_elements: HashSet<SimpleElement> = element_types
         .values()
-        .flat_map(|group| {
-            group.items().iter().filter_map(|item| match item {
+        .filter_map(|etype| etype.collection())
+        .flat_map(|ec| {
+            ec.items().iter().filter_map(|item| match item {
                 ElementCollectionItem::Element(element) => Some(SimpleElement::from(element)),
                 ElementCollectionItem::GroupRef(_) => None,
             })
@@ -21,8 +25,9 @@ pub(crate) fn build_elements_info(autosar_schema: &AutosarDataTypes) -> Vec<Simp
             .cmp(&e2.name)
             .then(e1.typeref.cmp(&e2.typeref))
             .then(e1.docstring.cmp(&e2.docstring))
+            .then(e1.amount.cmp(&e2.amount))
             .then(e1.ordered.cmp(&e2.ordered))
-            .then(e1.splittable.cmp(&e2.splittable))
+            .then(e1.splittable_ver.cmp(&e2.splittable_ver))
             .then(e1.restrict_std.cmp(&e2.restrict_std))
     });
 
@@ -33,10 +38,10 @@ pub(crate) fn build_elements_info(autosar_schema: &AutosarDataTypes) -> Vec<Simp
             name: String::from("AUTOSAR"),
             typeref: String::from("AR:AUTOSAR"),
             amount: ElementAmount::One,
-            splittable: true,
+            splittable_ver: 0xFFFF_FFFF,
             ordered: false,
             restrict_std: XsdRestrictToStandard::NotSet,
-            docstring: None,
+            docstring: Some(String::from("Root element of an AUTOSAR description.")),
         },
     );
     element_definitions_array
@@ -53,7 +58,7 @@ pub(crate) fn build_docstrings_info(
     // transform the HashSet into a Vec and sort the list
     let mut docstrings: Vec<String> = docstrings.into_iter().collect();
     docstrings.sort();
-    // enable lookup of entries by transferring iverything into a HashMap<docstring, position>
+    // enable lookup of entries by transferring everything into a HashMap<docstring, position>
 
     docstrings
         .into_iter()
@@ -63,11 +68,11 @@ pub(crate) fn build_docstrings_info(
 }
 
 pub(crate) fn generate(
-    autosar_schema: &AutosarDataTypes,
+    element_types: &FxHashMap<String, MergedElementDataType>,
     elements: &[SimpleElement],
     docstring_ids: &FxHashMap<String, usize>,
 ) -> String {
-    let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
+    let mut elemtypenames: Vec<&String> = element_types.keys().collect();
     elemtypenames.sort();
     let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
         .iter()
@@ -75,17 +80,26 @@ pub(crate) fn generate(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\npub(crate) static ELEMENTS: [ElementDefinition; {}] = [\n",
+        "\npub(crate) const ELEMENTS: [ElementDefinition; {}] = [\n",
         elements.len()
     );
-    for elem in elements {
+    for (idx, elem) in elements.iter().enumerate() {
         generated.push_str(&build_element_string(
             elem,
             &elemtype_nameidx,
             docstring_ids,
+            idx,
         ));
     }
     generated.push_str("];\n");
+
+    let autosar_idx = elements
+        .iter()
+        .position(|elem| elem.name == "AUTOSAR")
+        .unwrap();
+    generated.push_str(&format!(
+        "\npub(crate) const AUTOSAR_ELEMENT: u16 = {autosar_idx};\n"
+    ));
 
     generated
 }
@@ -94,6 +108,7 @@ fn build_element_string(
     elem: &SimpleElement,
     elemtype_nameidx: &FxHashMap<&str, usize>,
     docstring_ids: &FxHashMap<String, usize>,
+    idx: usize,
 ) -> String {
     // let mut sub_element_strings: Vec<String> = Vec::new();
     let elem_docstring_id = elem
@@ -103,12 +118,12 @@ fn build_element_string(
         .copied();
     let restrict_txt = restrict_std_to_text(elem.restrict_std);
     format!(
-        "    element!({}, {}, {:?}, {}, {}, {}, {:?}),\n",
+        "    /* {idx:4} */ element!({}, {}, {:?}, {}, 0x{:X}, {}, {:?}),\n",
         name_to_identifier(&elem.name),
         elemtype_nameidx.get(&*elem.typeref).unwrap(),
         elem.amount,
         elem.ordered,
-        elem.splittable,
+        elem.splittable_ver,
         restrict_txt,
         elem_docstring_id,
     )
@@ -128,7 +143,7 @@ pub(crate) fn generate_docstrings(docstring_ids: &FxHashMap<String, usize>) -> S
 
     let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
     output.push_str(&format!(
-        "pub(crate) static ELEMENT_DOCSTRINGS: [&'static str; {}] = [\n",
+        "pub(crate) const ELEMENT_DOCSTRINGS: [&'static str; {}] = [\n",
         docstrings.len()
     ));
     for ds in docstrings {

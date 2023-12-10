@@ -77,13 +77,7 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                 }
             }
             WorkQueueItem::Group(cur_group_typeref) => {
-                if autosar_schema
-                    .element_types
-                    .get(&cur_group_typeref)
-                    .is_none()
-                    && data.groups.get(&cur_group_typeref).is_some()
-                {
-                    let xsd_group = data.groups.get(&cur_group_typeref).unwrap();
+                if let Some(xsd_group) = data.groups.get(&cur_group_typeref) {
                     let group = flatten_group(data, xsd_group)?;
 
                     enqueue_group_dependencies(&mut work_queue, &group);
@@ -159,7 +153,6 @@ fn flatten_complex_type<'a>(
         XsdComplexTypeItem::Group(group_ref) => {
             if let Some(group) = data.groups.get(group_ref) {
                 let mut xsd_typenames = HashSet::new();
-                // let elements = flatten_group(data, group)?;
                 match &group.item {
                     XsdGroupItem::Sequence(sequence) => {
                         /* collect the name of the complex type and the names of all the groups in the sequence
@@ -171,21 +164,22 @@ fn flatten_complex_type<'a>(
                                 xsd_typenames.insert(strip_ar_prefix(groupname));
                             }
                         }
-                        if !xsd_typenames.contains("REFERRABLE") {
-                            // if it's not referrable, then the remaining info is meaningless
-                            xsd_typenames = HashSet::new();
-                        } else {
+                        if xsd_typenames.contains("REFERRABLE") {
                             // remove generic base types which are never relevant
                             xsd_typenames.remove("AR-OBJECT");
                             xsd_typenames.remove("REFERRABLE");
                             xsd_typenames.remove("IDENTIFIABLE");
                             xsd_typenames.remove("MULTILANGUAGE-REFERRABLE");
+                        } else {
+                            // if it's not referrable, then the remaining info is meaningless
+                            xsd_typenames = HashSet::new();
                         }
 
                         Ok(ElementDataType::Elements {
                             group_ref: group_ref.clone(),
                             attributes,
                             xsd_typenames,
+                            // mm_class: complex_type.mm_class.clone(),
                         })
                     }
                     XsdGroupItem::Choice(_) => {
@@ -194,12 +188,14 @@ fn flatten_complex_type<'a>(
                                 group_ref: group_ref.clone(),
                                 attributes,
                                 basetype: "xsd:string".to_string(),
+                                // mm_class: complex_type.mm_class.clone(),
                             })
                         } else {
                             Ok(ElementDataType::Elements {
                                 group_ref: group_ref.clone(),
                                 attributes,
                                 xsd_typenames: HashSet::default(),
+                                // mm_class: complex_type.mm_class.clone(),
                             })
                         }
                     }
@@ -249,7 +245,7 @@ fn flatten_simple_content(
                     } => {
                         inner_attributes.append(&mut attributes);
                     }
-                    _ => {}
+                    ElementDataType::Mixed { .. } => {}
                 };
                 Ok(complex_type)
             }
@@ -610,12 +606,17 @@ fn occurs_to_amount(min_occurs: usize, max_occurs: usize) -> ElementAmount {
 
 impl Element {
     fn new(xsd_element: &XsdElement, version_info: usize) -> Self {
+        let splittable_ver = if xsd_element.splittable {
+            version_info
+        } else {
+            0
+        };
         Self {
             name: xsd_element.name.clone(),
             typeref: xsd_element.typeref.clone(),
             amount: occurs_to_amount(xsd_element.min_occurs, xsd_element.max_occurs),
             version_info,
-            splittable: xsd_element.splittable,
+            splittable_ver,
             ordered: xsd_element.ordered,
             restrict_std: xsd_element.restrict_std,
             docstring: xsd_element.doctext.clone(),

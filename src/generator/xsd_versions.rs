@@ -1,6 +1,7 @@
 use crate::XsdFileInfo;
 use std::fmt::Write;
 use std::fs::File;
+use std::io::Write as IoWrite;
 
 pub(crate) fn generate(xsd_config: &[XsdFileInfo]) {
     let mut match_lines = String::new();
@@ -115,7 +116,6 @@ impl std::fmt::Display for AutosarVersion {{
     )
     .unwrap();
 
-    use std::io::Write;
     let mut file = File::create("gen/autosarversion.rs").unwrap();
     file.write_all(generated.as_bytes()).unwrap();
 }

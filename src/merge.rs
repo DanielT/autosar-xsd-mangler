@@ -145,11 +145,13 @@ fn merge_elem_types(
                 group_ref,
                 attributes,
                 xsd_typenames,
+                ..
             },
             ElementDataType::Elements {
                 group_ref: group_ref_new,
                 attributes: attributes_new,
                 xsd_typenames: xsd_typenames_new,
+                ..
             },
         ) => {
             result
@@ -266,6 +268,7 @@ fn merge_group_types(
                             ElementCollectionItem::Element(new_elem),
                         ) => {
                             cur_elem.version_info |= new_elem.version_info;
+                            cur_elem.splittable_ver |= new_elem.splittable_ver;
                             typesvec.elem_types.push(ElemOrGroup::Element(
                                 cur_elem.typeref.clone(),
                                 new_elem.typeref.clone(),

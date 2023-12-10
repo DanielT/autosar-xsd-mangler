@@ -16,7 +16,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
 
     writeln!(
         generated,
-        "pub(crate) static CHARACTER_DATA: [CharacterDataSpec; {}] = [",
+        "pub(crate) const CHARACTER_DATA: [CharacterDataSpec; {}] = [",
         ctnames.len()
     )
     .unwrap();
