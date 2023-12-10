@@ -325,7 +325,7 @@ impl ElementDataType {
         match self {
             ElementDataType::Characters { basetype, .. }
             | ElementDataType::Mixed { basetype, .. } => Some(basetype),
-            _ => None,
+            ElementDataType::Elements { .. } => None,
         }
     }
 }

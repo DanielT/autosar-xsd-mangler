@@ -100,8 +100,8 @@ pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u3
                 generation += 1;
 
                 for &key in &bucket.keys {
-                    let idx = (displace(hashes[key].1, hashes[key].2, d1, d2) % table_len_u32)
-                        as usize;
+                    let idx =
+                        (displace(hashes[key].1, hashes[key].2, d1, d2) % table_len_u32) as usize;
                     if map[idx].is_some() || try_map[idx] == generation {
                         continue 'disps;
                     }

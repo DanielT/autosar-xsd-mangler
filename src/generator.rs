@@ -1,11 +1,16 @@
 use super::{
     Attribute, AutosarDataTypes, CharacterDataType, Element, ElementAmount, ElementCollection,
-    ElementCollectionItem, ElementDataType, File, FxHashMap, XsdFileInfo, XsdRestrictToStandard,
+    ElementCollectionItem, ElementDataType, FxHashMap, XsdFileInfo, XsdRestrictToStandard,
 };
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::fs::File;
 
+mod character_types;
+mod element_definitions;
+mod identifier_enums;
 mod perfect_hash;
+mod xsd_versions;
 
 struct GroupsInfo {
     groups_array: Vec<Group>,
@@ -53,219 +58,15 @@ struct AttributeInfo {
 pub(crate) fn generate(xsd_config: &[XsdFileInfo], autosar_schema: &AutosarDataTypes) {
     create_output_dir();
 
-    generate_xsd_versions(xsd_config);
+    xsd_versions::generate(xsd_config);
 
-    generate_identifier_enums(autosar_schema);
+    identifier_enums::generate(autosar_schema);
 
     generate_types(autosar_schema);
 }
 
 fn create_output_dir() {
     let _ = std::fs::create_dir("gen");
-}
-
-fn generate_xsd_versions(xsd_config: &[XsdFileInfo]) {
-    let mut match_lines = String::new();
-    let mut filename_lines = String::new();
-    let mut desc_lines = String::new();
-    let mut generated = String::from(
-        r"use num_derive::FromPrimitive;
-use num_traits::cast::FromPrimitive;
-
-#[derive(Debug)]
-/// Error type returned when `from_str()` / `parse()` for `AutosarVersion` fails
-pub struct ParseAutosarVersionError;
-
-#[allow(non_camel_case_types)]
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash, FromPrimitive)]
-#[repr(u32)]
-#[non_exhaustive]
-/// Enum of all Autosar versions
-pub enum AutosarVersion {
-",
-    );
-
-    for (idx, xsd_file_info) in xsd_config.iter().enumerate() {
-        writeln!(
-            generated,
-            r#"    /// {} - xsd file name: {}"#,
-            xsd_file_info.desc, xsd_file_info.name
-        )
-        .unwrap();
-        writeln!(
-            generated,
-            r#"    {} = 0x{:x},"#,
-            xsd_file_info.ident,
-            1 << idx
-        )
-        .unwrap();
-        writeln!(
-            match_lines,
-            r#"            "{}" => Ok(Self::{}),"#,
-            xsd_file_info.name, xsd_file_info.ident
-        )
-        .unwrap();
-        writeln!(
-            filename_lines,
-            r#"            Self::{} => "{}","#,
-            xsd_file_info.ident, xsd_file_info.name
-        )
-        .unwrap();
-        writeln!(
-            desc_lines,
-            r#"            Self::{} => "{}","#,
-            xsd_file_info.ident, xsd_file_info.desc
-        )
-        .unwrap();
-    }
-    let lastident = xsd_config[xsd_config.len() - 1].ident;
-    writeln!(
-        generated,
-        r#"}}
-
-impl AutosarVersion {{
-    /// get the name of the xds file matching the Autosar version
-    #[must_use]
-    pub fn filename(&self) -> &'static str {{
-        match self {{
-{filename_lines}
-        }}
-    }}
-
-    /// Human readable description of the Autosar version
-    ///
-    /// This is particularly useful for the later versions, where the xsd files are just sequentially numbered.
-    /// For example `Autosar_00050` -> "AUTOSAR R21-11"
-    #[must_use]
-    pub fn describe(&self) -> &'static str {{
-        match self {{
-{desc_lines}
-        }}
-    }}
-
-    /// make an `AutosarVersion` from a u32 value
-    ///
-    /// All `AutosarVersion`s are associated with a power of two u32 value, for example `Autosar_4_3_0` == 0x100
-    /// If the given value is a valid constant of `AutosarVersion`, the enum value will be returnd
-    ///
-    /// This is useful in order to decode version masks
-    #[must_use]
-    pub fn from_val(n: u32) -> Option<Self> {{
-        Self::from_u32(n)
-    }}
-
-    /// `AutosarVersion::LATEST` is an alias of which ever is the latest version
-    pub const LATEST: AutosarVersion = AutosarVersion::{lastident};
-}}
-
-impl std::str::FromStr for AutosarVersion {{
-    type Err = ParseAutosarVersionError;
-    fn from_str(input: &str) -> Result<Self, Self::Err> {{
-        match input {{
-{match_lines}
-            _ => Err(ParseAutosarVersionError),
-        }}
-    }}
-}}
-
-impl std::fmt::Display for AutosarVersion {{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
-        f.write_str(self.describe())
-    }}
-}}
-"#,
-    )
-    .unwrap();
-
-    use std::io::Write;
-    let mut file = File::create("gen/autosarversion.rs").unwrap();
-    file.write_all(generated.as_bytes()).unwrap();
-}
-
-fn generate_identifier_enums(autosar_schema: &AutosarDataTypes) {
-    let mut attribute_names = HashSet::new();
-    let mut element_names = HashSet::new();
-    let mut enum_items = HashSet::new();
-
-    element_names.insert("AUTOSAR".to_string());
-
-    // for each group type in the schema: collect element names
-    for group_type in autosar_schema.group_types.values() {
-        for ec_item in group_type.items() {
-            // for each sub-element of the current element type (skipping groups)
-            if let ElementCollectionItem::Element(elem) = ec_item {
-                if element_names.get(&elem.name).is_none() {
-                    element_names.insert(elem.name.clone());
-                }
-            }
-        }
-    }
-    // for each element data type in the schema: collect attribute names
-    for artype in autosar_schema.element_types.values() {
-        for attr in artype.attributes() {
-            attribute_names.insert(attr.name.clone());
-        }
-    }
-
-    // collect all enum values in use by any character data type
-    for artype in autosar_schema.character_types.values() {
-        if let CharacterDataType::Enum(enumdef) = &artype {
-            for (itemname, _) in &enumdef.enumitems {
-                enum_items.insert(itemname.to_owned());
-            }
-        }
-    }
-
-    let mut element_names: Vec<String> = element_names
-        .iter()
-        .map(std::borrow::ToOwned::to_owned)
-        .collect();
-    element_names.sort();
-    let mut attribute_names: Vec<String> = attribute_names
-        .iter()
-        .map(std::borrow::ToOwned::to_owned)
-        .collect();
-    attribute_names.sort();
-    let mut enum_items: Vec<String> = enum_items
-        .iter()
-        .map(std::borrow::ToOwned::to_owned)
-        .collect();
-    enum_items.sort();
-
-    let element_name_refs: Vec<&str> = element_names.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&element_name_refs, 7);
-    let enumstr = generate_enum(
-        "ElementName",
-        "Enum of all element names in Autosar",
-        &element_name_refs,
-        &disps,
-    );
-    use std::io::Write;
-    let mut file = File::create("gen/elementname.rs").unwrap();
-    file.write_all(enumstr.as_bytes()).unwrap();
-
-    let attribute_name_refs: Vec<&str> = attribute_names.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&attribute_name_refs, 5);
-    let enumstr = generate_enum(
-        "AttributeName",
-        "Enum of all attribute names in Autosar",
-        &attribute_name_refs,
-        &disps,
-    );
-    let mut file = File::create("gen/attributename.rs").unwrap();
-    file.write_all(enumstr.as_bytes()).unwrap();
-
-    let enum_item_refs: Vec<&str> = enum_items.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&enum_item_refs, 7);
-
-    let enumstr = generate_enum(
-        "EnumItem",
-        "Enum of all possible enum values in Autosar",
-        &enum_item_refs,
-        &disps,
-    );
-    let mut file = File::create("gen/enumitem.rs").unwrap();
-    file.write_all(enumstr.as_bytes()).unwrap();
 }
 
 pub(crate) fn generate_types(autosar_schema: &AutosarDataTypes) {
@@ -303,11 +104,11 @@ macro_rules! g {
 "#,
     );
 
-    let character_types = generate_character_types(autosar_schema);
+    let character_types = character_types::generate(autosar_schema);
     generated.push_str(&character_types);
 
-    let element_definitions_array = build_elements_info(autosar_schema);
-    let docstring_ids = build_docstrings_info(&element_definitions_array);
+    let element_definitions_array = element_definitions::build_elements_info(autosar_schema);
+    let docstring_ids = element_definitions::build_docstrings_info(&element_definitions_array);
     let GroupsInfo {
         mut versions_array,
         versions_index_info,
@@ -316,7 +117,7 @@ macro_rules! g {
         item_ref_info,
     } = build_groups_info(autosar_schema, &element_definitions_array);
 
-    generated.push_str(&generate_element_definitions_array(
+    generated.push_str(&element_definitions::generate(
         autosar_schema,
         &element_definitions_array,
         &docstring_ids,
@@ -348,149 +149,11 @@ macro_rules! g {
         &attr_ver_index_info,
     ));
 
-    generated.push_str(&generate_element_docstrings(&docstring_ids));
+    generated.push_str(&element_definitions::generate_docstrings(&docstring_ids));
 
     use std::io::Write;
     let mut file = File::create("gen/specification.rs").unwrap();
     file.write_all(generated.as_bytes()).unwrap();
-}
-
-pub(crate) fn generate_character_types(autosar_schema: &AutosarDataTypes) -> String {
-    let mut generated = String::new();
-
-    let regexes: FxHashMap<String, String> = VALIDATOR_REGEX_MAPPING
-        .iter()
-        .map(|(regex, name)| ((*regex).to_string(), (*name).to_string()))
-        .collect();
-
-    let mut ctnames: Vec<&String> = autosar_schema.character_types.keys().collect();
-    ctnames.sort();
-
-    writeln!(
-        generated,
-        "pub(crate) static CHARACTER_DATA: [CharacterDataSpec; {}] = [",
-        ctnames.len()
-    )
-    .unwrap();
-    for ctname in &ctnames {
-        let chtype = autosar_schema.character_types.get(*ctname).unwrap();
-
-        let chdef = match chtype {
-            CharacterDataType::Pattern {
-                pattern,
-                max_length,
-            } => {
-                let fullmatch_pattern = format!("^({pattern})$");
-                // no longer using proc-macro-regex due to unacceptably long run-times of the proc macro (> 5 Minutes!)
-                // if regexes.get(&fullmatch_pattern).is_none() {
-                //     let regex_validator_name = format!("validate_regex_{}", regexes.len() + 1);
-                //     writeln!(validators, r#"regex!({regex_validator_name} br"{fullmatch_pattern}");"#).unwrap();
-                //     regexes.insert(fullmatch_pattern.clone(), regex_validator_name);
-                // }
-                let regex_validator_name = regexes
-                    .get(&fullmatch_pattern)
-                    .unwrap_or_else(|| panic!("missing regex: {fullmatch_pattern}"));
-                format!(
-                    r#"CharacterDataSpec::Pattern{{check_fn: {regex_validator_name}, regex: r"{pattern}", max_length: {max_length:?}}}"#
-                )
-            }
-            CharacterDataType::Enum(enumdef) => {
-                let enumitem_strs: Vec<String> = enumdef
-                    .enumitems
-                    .iter()
-                    .map(|(name, ver)| {
-                        format!("(EnumItem::{}, 0x{ver:x})", name_to_identifier(name))
-                    })
-                    .collect();
-                format!(
-                    r#"CharacterDataSpec::Enum{{items: &[{}]}}"#,
-                    enumitem_strs.join(", ")
-                )
-            }
-            CharacterDataType::String {
-                max_length,
-                preserve_whitespace,
-            } => {
-                format!(
-                    r#"CharacterDataSpec::String{{preserve_whitespace: {preserve_whitespace}, max_length: {max_length:?}}}"#
-                )
-            }
-            CharacterDataType::UnsignedInteger => "CharacterDataSpec::UnsignedInteger".to_string(),
-            CharacterDataType::Double => "CharacterDataSpec::Double".to_string(),
-        };
-        generated.push_str("    ");
-        generated.push_str(&chdef);
-        generated.push_str(",\n");
-    }
-    generated.push_str("];\n");
-
-    let (reference_type_idx, _) = ctnames
-        .iter()
-        .enumerate()
-        .find(|(_, name)| **name == "AR:REF--SIMPLE")
-        .expect("reference type \"AR:REF--SIMPLE\" not found ?!");
-    generated.push_str(&format!(
-        "pub(crate) const REFERENCE_TYPE_IDX: u16 = {reference_type_idx};\n"
-    ));
-
-    generated
-}
-
-fn build_elements_info(autosar_schema: &AutosarDataTypes) -> Vec<SimpleElement> {
-    // make a hashset of all elements to eliminate any duplicates
-    let all_elements: HashSet<SimpleElement> = autosar_schema
-        .group_types
-        .values()
-        .flat_map(|group| {
-            group.items().iter().filter_map(|item| match item {
-                ElementCollectionItem::Element(element) => Some(SimpleElement::from(element)),
-                ElementCollectionItem::GroupRef(_) => None,
-            })
-        })
-        .collect();
-    let mut element_definitions_array: Vec<SimpleElement> = all_elements.into_iter().collect();
-    element_definitions_array.sort_by(|e1, e2| {
-        e1.name
-            .cmp(&e2.name)
-            .then(e1.typeref.cmp(&e2.typeref))
-            .then(e1.docstring.cmp(&e2.docstring))
-            .then(e1.ordered.cmp(&e2.ordered))
-            .then(e1.splittable.cmp(&e2.splittable))
-            .then(e1.restrict_std.cmp(&e2.restrict_std))
-    });
-
-    // create an element definition for the AUTOSAR element - the xsd files contain this info, but it is lost before we get here
-    element_definitions_array.insert(
-        0,
-        SimpleElement {
-            name: String::from("AUTOSAR"),
-            typeref: String::from("AR:AUTOSAR"),
-            amount: ElementAmount::One,
-            splittable: true,
-            ordered: false,
-            restrict_std: XsdRestrictToStandard::NotSet,
-            docstring: None,
-        },
-    );
-    element_definitions_array
-}
-
-fn build_docstrings_info(element_definitions_array: &[SimpleElement]) -> FxHashMap<String, usize> {
-    // first, put all docstrings into a HashSet to elimitate duplicates
-    let docstrings: HashSet<String> = element_definitions_array
-        .iter()
-        .filter_map(|e| e.docstring.clone())
-        .collect();
-    // transform the HashSet into a Vec and sort the list
-    let mut docstrings: Vec<String> = docstrings.into_iter().collect();
-    docstrings.sort();
-    // enable lookup of entries by transferring iverything into a HashMap<docstring, position>
-
-    docstrings
-        .into_iter()
-        .enumerate()
-        .map(|(idx, ds)| (ds, idx))
-        .collect()
 }
 
 fn build_groups_info(
@@ -681,34 +344,6 @@ fn build_attributes_info(
         attributes_index_info,
         attr_ver_index_info,
     }
-}
-
-fn generate_element_definitions_array(
-    autosar_schema: &AutosarDataTypes,
-    elements: &[SimpleElement],
-    docstring_ids: &FxHashMap<String, usize>,
-) -> String {
-    let mut elemtypenames: Vec<&String> = autosar_schema.element_types.keys().collect();
-    elemtypenames.sort();
-    let elemtype_nameidx: FxHashMap<&str, usize> = elemtypenames
-        .iter()
-        .enumerate()
-        .map(|(idx, name)| (&***name, idx))
-        .collect();
-    let mut generated = format!(
-        "\npub(crate) static ELEMENTS: [ElementDefinition; {}] = [\n",
-        elements.len()
-    );
-    for elem in elements {
-        generated.push_str(&build_element_string(
-            elem,
-            &elemtype_nameidx,
-            docstring_ids,
-        ));
-    }
-    generated.push_str("];\n");
-
-    generated
 }
 
 fn generate_group_items(items: &[GroupItem]) -> String {
@@ -968,54 +603,6 @@ fn build_elementnames_of_type_list(
     map
 }
 
-fn build_element_string(
-    elem: &SimpleElement,
-    elemtype_nameidx: &FxHashMap<&str, usize>,
-    docstring_ids: &FxHashMap<String, usize>,
-) -> String {
-    // let mut sub_element_strings: Vec<String> = Vec::new();
-    let elem_docstring_id = elem
-        .docstring
-        .as_ref()
-        .and_then(|ds| docstring_ids.get(ds))
-        .copied();
-    let restrict_txt = restrict_std_to_text(elem.restrict_std);
-    format!(
-        "    element!({}, {}, {:?}, {}, {}, {}, {:?}),\n",
-        name_to_identifier(&elem.name),
-        elemtype_nameidx.get(&*elem.typeref).unwrap(),
-        elem.amount,
-        elem.ordered,
-        elem.splittable,
-        restrict_txt,
-        elem_docstring_id,
-    )
-}
-
-fn generate_element_docstrings(docstring_ids: &FxHashMap<String, usize>) -> String {
-    let mut docstrings: Vec<String> = docstring_ids.keys().cloned().collect();
-    docstrings.sort_by(|a, b| docstring_ids.get(a).cmp(&docstring_ids.get(b)));
-
-    let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
-    output.push_str(&format!(
-        "pub(crate) static ELEMENT_DOCSTRINGS: [&'static str; {}] = [\n",
-        docstrings.len()
-    ));
-    for ds in docstrings {
-        output.push_str(&format!("    {ds:?},\n"));
-    }
-    output.push_str("];\n");
-    output
-}
-
-fn restrict_std_to_text(restrict_std: XsdRestrictToStandard) -> &'static str {
-    match restrict_std {
-        XsdRestrictToStandard::NotSet | XsdRestrictToStandard::Both => "NotRestricted",
-        XsdRestrictToStandard::ClassicPlatform => "ClassicPlatform",
-        XsdRestrictToStandard::AdaptivePlatform => "AdaptivePlatform",
-    }
-}
-
 fn build_attributes_string(
     attrs: &[Attribute],
     chartype_nameidx: &FxHashMap<&str, usize>,
@@ -1091,108 +678,6 @@ fn cmp_elemtypenames_attrs(
     }
 }
 
-fn generate_enum(
-    enum_name: &str,
-    enum_docstring: &str,
-    item_names: &[&str],
-    disps: &[(u32, u32)],
-) -> String {
-    let mut generated = String::new();
-    let displen = disps.len();
-
-    let width = item_names.iter().map(|name| name.len()).max().unwrap();
-
-    writeln!(
-        generated,
-        "use crate::hashfunc;
-
-#[derive(Debug)]
-/// The error type `Parse{enum_name}Error` is returned when `from_str()` / `parse()` fails for `{enum_name}`
-pub struct Parse{enum_name}Error;
-"
-    )
-    .unwrap();
-    generated
-        .write_str(
-            "#[allow(dead_code, non_camel_case_types)]
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-#[repr(u16)]
-#[non_exhaustive]
-",
-        )
-        .unwrap();
-    writeln!(generated, "/// {enum_docstring}\npub enum {enum_name} {{").unwrap();
-    let mut hash_sorted_item_names = item_names.to_owned();
-    hash_sorted_item_names.sort_by(|k1, k2| {
-        perfect_hash::get_index(k1, disps, item_names.len()).cmp(&perfect_hash::get_index(
-            k2,
-            disps,
-            item_names.len(),
-        ))
-    });
-    for item_name in item_names {
-        let idx = perfect_hash::get_index(item_name, disps, item_names.len());
-        let ident = name_to_identifier(item_name);
-        writeln!(generated, "    /// {item_name}").unwrap();
-        writeln!(generated, "    {ident:width$}= {idx},").unwrap();
-    }
-    writeln!(generated, "}}").unwrap();
-
-    let length = item_names.len();
-    writeln!(
-        generated,
-        r##"
-impl {enum_name} {{
-    const STRING_TABLE: [&'static str; {length}] = {hash_sorted_item_names:?};
-
-    /// derive an enum entry from an input string using a perfect hash function
-    pub fn from_bytes(input: &[u8]) -> Result<Self, Parse{enum_name}Error> {{
-        static DISPLACEMENTS: [(u16, u16); {displen}] = {disps:?};
-        let (g, f1, f2) = hashfunc(input);
-        let (d1, d2) = DISPLACEMENTS[(g % {displen}) as usize];
-        let item_idx = u32::from(d2).wrapping_add(f1.wrapping_mul(u32::from(d1))).wrapping_add(f2) as usize % {length};
-        if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
-            return Err(Parse{enum_name}Error);
-        }}
-        Ok(unsafe {{
-            std::mem::transmute::<u16, Self>(item_idx as u16)
-        }})
-    }}
-
-    /// get the str corresponding to an item
-    ///
-    /// The returned &str has static lifetime, becasue it is a reference to an entry in a list of constants
-    #[must_use]
-    pub fn to_str(&self) -> &'static str {{
-        {enum_name}::STRING_TABLE[*self as usize]
-    }}
-}}
-
-impl std::str::FromStr for {enum_name} {{
-    type Err = Parse{enum_name}Error;
-    fn from_str(input: &str) -> Result<Self, Self::Err> {{
-        Self::from_bytes(input.as_bytes())
-    }}
-}}
-
-impl std::fmt::Debug for {enum_name} {{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
-        f.write_str({enum_name}::STRING_TABLE[*self as usize])
-    }}
-}}
-
-impl std::fmt::Display for {enum_name} {{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
-        f.write_str({enum_name}::STRING_TABLE[*self as usize])
-    }}
-}}
-"##
-    )
-    .unwrap();
-
-    generated
-}
-
 fn name_to_identifier(name: &str) -> String {
     let mut keep_capital = true;
     let mut force_capital = false;
@@ -1247,86 +732,3 @@ impl From<&Element> for SimpleElement {
         }
     }
 }
-
-// map a regex to a validation finction name
-static VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
-    (r"^(0x[0-9a-z]*)$", "validate_regex_1"),
-    (
-        r"^([1-9][0-9]*|0[xX][0-9a-fA-F]*|0[bB][0-1]+|0[0-7]*|UNSPECIFIED|UNKNOWN|BOOLEAN|PTR)$",
-        "validate_regex_2",
-    ),
-    (
-        r"^([1-9][0-9]*|0[xX][0-9a-fA-F]+|0[0-7]*|0[bB][0-1]+|ANY|ALL)$",
-        "validate_regex_3",
-    ),
-    (r"^([0-9]+|ANY)$", "validate_regex_4"),
-    (r"^([0-9]+|STRING|ARRAY)$", "validate_regex_5"),
-    (r"^(0|1|true|false)$", "validate_regex_6"),
-    (r"^([a-zA-Z_][a-zA-Z0-9_]*)$", "validate_regex_7"),
-    (r"^([a-zA-Z][a-zA-Z0-9_]*)$", "validate_regex_8"),
-    (
-        r"^(([0-9]{4}-[0-9]{2}-[0-9]{2})(T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|([+\-][0-9]{2}:[0-9]{2})))?)$",
-        "validate_regex_9",
-    ),
-    (r"^([a-zA-Z][a-zA-Z0-9-]*)$", "validate_regex_10"),
-    (r"^([0-9a-zA-Z_\-]+)$", "validate_regex_11"),
-    (
-        r"^(%[ \-+#]?[0-9]*(\.[0-9]+)?[bBdiouxXfeEgGcs])$",
-        "validate_regex_12",
-    ),
-    (
-        r"^(0|[\+\-]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$",
-        "validate_regex_13",
-    ),
-    (
-        r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|ANY)$",
-        "validate_regex_14",
-    ),
-    (
-        r"^([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4}){7,7}|ANY)$",
-        "validate_regex_15",
-    ),
-    (
-        r"^((0[xX][0-9a-fA-F]+)|(0[0-7]+)|(0[bB][0-1]+)|(([+\-]?[1-9][0-9]+(\.[0-9]+)?|[+\-]?[0-9](\.[0-9]+)?)([eE]([+\-]?)[0-9]+)?)|\.0|INF|-INF|NaN)$",
-        "validate_regex_16",
-    ),
-    (
-        r"^(([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})$",
-        "validate_regex_17",
-    ),
-    (
-        r"^([a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*(\.[a-zA-Z_][a-zA-Z0-9_]*(\[([a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)\])*)*)$",
-        "validate_regex_18",
-    ),
-    (r"^([A-Z][a-zA-Z0-9_]*)$", "validate_regex_19"),
-    (r"^([1-9][0-9]*)$", "validate_regex_20"),
-    (
-        r"^(0|[\+]?[1-9][0-9]*|0[xX][0-9a-fA-F]+|0[bB][0-1]+|0[0-7]+)$",
-        "validate_regex_21",
-    ),
-    (
-        r"^([a-zA-Z]([a-zA-Z0-9]|_[a-zA-Z0-9])*_?)$",
-        "validate_regex_22",
-    ),
-    (
-        r"^(-?([0-9]+|MAX-TEXT-SIZE|ARRAY-SIZE))$",
-        "validate_regex_23",
-    ),
-    (
-        r"^(/?[a-zA-Z][a-zA-Z0-9_]{0,127}(/[a-zA-Z][a-zA-Z0-9_]{0,127})*)$",
-        "validate_regex_24",
-    ),
-    (
-        r"^([0-9]+\.[0-9]+\.[0-9]+([\._;].*)?)$",
-        "validate_regex_25",
-    ),
-    (
-        r"^((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-((0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?)$",
-        "validate_regex_26",
-    ),
-    (r"^([0-1])$", "validate_regex_27"),
-    (
-        r"^((-?[a-zA-Z_]+)(( )+-?[a-zA-Z_]+)*)$",
-        "validate_regex_28",
-    ),
-];
