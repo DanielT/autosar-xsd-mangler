@@ -1,9 +1,10 @@
 [package]
 name = "autosar-xsd-mangler"
-version = "0.5.0"
+version = "0.6.0"
+authors = ["Daniel Thaler <daniel@dthaler.de>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT OR Apache-2.0"
+description = "autosar xsd processor for autosar-data-specification"
 
 [dependencies]
 xml-rs = "0.8"

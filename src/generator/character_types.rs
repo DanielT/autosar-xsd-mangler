@@ -86,7 +86,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
 
 // map a regex to a validation function name
 static VALIDATOR_REGEX_MAPPING: [(&str, &str); 28] = [
-    (r"^(0x[0-9a-z]*)$", "validate_regex_1"),
+    (r"^(0[xX][0-9a-fA-F]+)$", "validate_regex_1"),
     (
         r"^([1-9][0-9]*|0[xX][0-9a-fA-F]*|0[bB][0-1]+|0[0-7]*|UNSPECIFIED|UNKNOWN|BOOLEAN|PTR)$",
         "validate_regex_2",

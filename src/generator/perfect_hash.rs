@@ -45,7 +45,7 @@ fn displace(f1: u32, f2: u32, d1: u32, d2: u32) -> u32 {
 // changes:
 // - don't use siphash, instead use the above home-grown hash func, which is inspired by FxHasher (rustc-hash)
 // - make lambda a parameter instead of a constant. for some of the input data this allows more compact tables to be generated
-pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u32)> {
+pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Result<Vec<(u32, u32)>, String> {
     struct Bucket {
         idx: usize,
         keys: Vec<usize>,
@@ -119,13 +119,11 @@ pub(crate) fn make_perfect_hash(entries: &[&str], lambda: usize) -> Vec<(u32, u3
         }
 
         // Unable to find displacements for a bucket
-        panic!(
-            "perfect hash generation failed ({} items, lambda {lambda})",
-            entries.len()
-        );
+        return Err(format!("perfect hash generation failed ({} items, lambda {lambda})",
+        entries.len()));
     }
 
-    disps
+    Ok(disps)
 }
 
 #[inline]

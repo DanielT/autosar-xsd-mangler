@@ -55,7 +55,9 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
     enum_items.sort();
 
     let element_name_refs: Vec<&str> = element_names.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&element_name_refs, 7);
+    let disps = perfect_hash::make_perfect_hash(&element_name_refs, 7)
+        .map_err(|err| format!("element names: {err}"))
+        .unwrap();
     let enumstr = generate_enum(
         "ElementName",
         "Enum of all element names in Autosar",
@@ -67,7 +69,9 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
     file.write_all(enumstr.as_bytes()).unwrap();
 
     let attribute_name_refs: Vec<&str> = attribute_names.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&attribute_name_refs, 5);
+    let disps = perfect_hash::make_perfect_hash(&attribute_name_refs, 5)
+        .map_err(|err| format!("attribute names: {err}"))
+        .unwrap();
     let enumstr = generate_enum(
         "AttributeName",
         "Enum of all attribute names in Autosar",
@@ -78,7 +82,9 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
     file.write_all(enumstr.as_bytes()).unwrap();
 
     let enum_item_refs: Vec<&str> = enum_items.iter().map(|name| &**name).collect();
-    let disps = perfect_hash::make_perfect_hash(&enum_item_refs, 7);
+    let disps = perfect_hash::make_perfect_hash(&enum_item_refs, 5)
+        .map_err(|err| format!("enum item names: {err}"))
+        .unwrap();
 
     let enumstr = generate_enum(
         "EnumItem",

@@ -286,6 +286,7 @@ fn name_to_identifier(name: &str) -> String {
     let mut keep_capital = true;
     let mut force_capital = false;
     let mut result = String::new();
+    let mut prev_is_digit = false;
 
     if let Some(firstchar) = name.chars().next() {
         if !firstchar.is_ascii_alphabetic() {
@@ -301,14 +302,23 @@ fn name_to_identifier(name: &str) -> String {
             keep_capital = true;
         } else if c.is_ascii_alphanumeric() {
             if force_capital {
+                if prev_is_digit && c.is_ascii_digit() {
+                    // two digits separated by '-' should still be separated after the transformation
+                    result.push('_');
+                }
                 result.push(c.to_ascii_uppercase());
                 force_capital = false;
             } else if keep_capital {
+                if prev_is_digit && c.is_ascii_digit() {
+                    // two digits separated by '-' should still be separated after the transformation
+                    result.push('_');
+                }
                 result.push(c);
                 keep_capital = false;
             } else {
                 result.push(c.to_ascii_lowercase());
             }
+            prev_is_digit = c.is_ascii_digit();
         }
     }
 
