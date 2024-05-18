@@ -27,7 +27,7 @@ pub enum AutosarVersion {
     for (idx, xsd_file_info) in xsd_config.iter().enumerate() {
         writeln!(
             generated,
-            r#"    /// {} - xsd file name: {}"#,
+            r#"    /// {} - xsd file name: `{}`"#,
             xsd_file_info.desc, xsd_file_info.name
         )
         .unwrap();
@@ -63,7 +63,7 @@ pub enum AutosarVersion {
         r#"}}
 
 impl AutosarVersion {{
-    /// get the name of the xds file matching the Autosar version
+    /// get the name of the xsd file matching the Autosar version
     #[must_use]
     pub fn filename(&self) -> &'static str {{
         match self {{
