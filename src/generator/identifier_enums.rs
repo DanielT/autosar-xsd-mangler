@@ -151,6 +151,10 @@ impl {enum_name} {{
     const STRING_TABLE: [&'static str; {length}] = {hash_sorted_item_names:?};
 
     /// derive an enum entry from an input string using a perfect hash function
+    ///
+    /// # Errors
+    ///
+    /// [`Parse{enum_name}Error`]: The input string did not match the name of any enum item
     pub fn from_bytes(input: &[u8]) -> Result<Self, Parse{enum_name}Error> {{
         static DISPLACEMENTS: [(u16, u16); {displen}] = {disps:?};
         let (g, f1, f2) = hashfunc(input);
