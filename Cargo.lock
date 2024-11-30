@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "autosar-xsd-mangler"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "rustc-hash",
  "xml-rs",
