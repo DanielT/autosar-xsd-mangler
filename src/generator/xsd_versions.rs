@@ -7,16 +7,16 @@ pub(crate) fn generate(xsd_config: &[XsdFileInfo]) {
     let mut match_lines = String::new();
     let mut filename_lines = String::new();
     let mut desc_lines = String::new();
+    let mut from_lines = String::new();
     let mut generated = String::from(
-        r"use num_derive::FromPrimitive;
-use num_traits::cast::FromPrimitive;
+        r"use num_traits::cast::FromPrimitive;
 
 #[derive(Debug)]
 /// Error type returned when `from_str()` / `parse()` for `AutosarVersion` fails
 pub struct ParseAutosarVersionError;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash, FromPrimitive)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash)]
 #[repr(u32)]
 #[non_exhaustive]
 /// Enum of all Autosar versions
@@ -54,6 +54,12 @@ pub enum AutosarVersion {
             desc_lines,
             r#"            Self::{} => "{}","#,
             xsd_file_info.ident, xsd_file_info.desc
+        )
+        .unwrap();
+        writeln!(
+            from_lines,
+            r#"            0x{:x} => Some(Self::{}),"#,
+            1 << idx, xsd_file_info.ident
         )
         .unwrap();
     }
@@ -110,6 +116,24 @@ impl std::str::FromStr for AutosarVersion {{
 impl std::fmt::Display for AutosarVersion {{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
         f.write_str(self.describe())
+    }}
+}}
+
+impl FromPrimitive for AutosarVersion {{
+    #[inline]
+    fn from_i64(n: i64) -> Option<Self> {{
+        if n < 0 {{
+            return None;
+        }}
+        Self::from_u64(n as u64)
+    }}
+
+    #[inline]
+    fn from_u64(n: u64) -> Option<Self> {{
+        match n {{
+{from_lines}
+            _ => None,
+        }}
     }}
 }}
 "#,
