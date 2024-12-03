@@ -64,7 +64,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
                 )
             }
             CharacterDataType::UnsignedInteger => "CharacterDataSpec::UnsignedInteger".to_string(),
-            CharacterDataType::Double => "CharacterDataSpec::Double".to_string(),
+            CharacterDataType::Double => "CharacterDataSpec::Float".to_string(),
         };
         generated.push_str("    ");
         generated.push_str(&chdef);
