@@ -35,18 +35,18 @@ pub(crate) fn merge(
     let mut already_checked: HashSet<ElemOrGroup> = HashSet::new();
     // while let Some((typename_merged, typename_input)) = merge_queue.elem_types.pop() {
     while let Some(elem_or_group) = merge_queue.elem_types.pop() {
-        if already_checked.get(&elem_or_group).is_none() {
+        if !already_checked.contains(&elem_or_group) {
             match &elem_or_group {
                 ElemOrGroup::Element(typename_merged, typename_input) => {
                     // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
-                    if merged_xsd.element_types.get(typename_merged).is_none() {
+                    if !merged_xsd.element_types.contains_key(typename_merged) {
                         if let Some(input_type) = input_xsd.element_types.get(typename_input) {
                             merged_xsd
                                 .element_types
                                 .insert(typename_merged.clone(), input_type.clone());
                         }
                     }
-                    if merged_xsd.element_types.get(typename_merged).is_some() {
+                    if merged_xsd.element_types.contains_key(typename_merged) {
                         let mut additional_items = merge_elem_types(
                             merged_xsd,
                             typename_merged,
@@ -59,14 +59,14 @@ pub(crate) fn merge(
                 }
                 ElemOrGroup::Group(typename_merged, typename_input) => {
                     // typename_merged might not exist in merged_xsd if an element requiring this type was only just copied by the merge
-                    if merged_xsd.group_types.get(typename_merged).is_none() {
+                    if !merged_xsd.group_types.contains_key(typename_merged) {
                         if let Some(input_type) = input_xsd.group_types.get(typename_input) {
                             merged_xsd
                                 .group_types
                                 .insert(typename_merged.clone(), input_type.clone());
                         }
                     }
-                    if merged_xsd.group_types.get(typename_merged).is_some() {
+                    if merged_xsd.group_types.contains_key(typename_merged) {
                         let mut additional_items = merge_group_types(
                             merged_xsd,
                             typename_merged,
@@ -83,11 +83,8 @@ pub(crate) fn merge(
 
     let mut already_checked = HashSet::new();
     while let Some((typename_merged, typename_input)) = merge_queue.char_types.pop() {
-        if already_checked
-            .get(&(typename_merged.clone(), typename_input.clone()))
-            .is_none()
-        {
-            if merged_xsd.character_types.get(&typename_merged).is_none() {
+        if !already_checked.contains(&(typename_merged.clone(), typename_input.clone())) {
+            if !merged_xsd.character_types.contains_key(&typename_merged) {
                 if let Some(input_type) = input_xsd.character_types.get(&typename_input) {
                     merged_xsd
                         .character_types
@@ -95,7 +92,7 @@ pub(crate) fn merge(
                 }
             }
 
-            if merged_xsd.character_types.get(&typename_merged).is_some() {
+            if merged_xsd.character_types.contains_key(&typename_merged) {
                 merge_char_types(merged_xsd, &typename_merged, input_xsd, &typename_input);
             }
 

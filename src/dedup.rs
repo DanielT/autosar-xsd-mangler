@@ -49,9 +49,9 @@ fn find_chartype_replacements(autosar_types: &mut AutosarDataTypes) -> FxHashMap
     char_typenames.sort_by(dedup_keycmp);
     for idx1 in 0..(char_typenames.len() - 1) {
         let typename1 = &char_typenames[idx1];
-        if char_replacements.get(typename1).is_none() {
+        if !char_replacements.contains_key(typename1) {
             for typename2 in char_typenames.iter().skip(idx1 + 1) {
-                if char_replacements.get(typename2).is_none()
+                if !char_replacements.contains_key(typename2)
                     && autosar_types.character_types.get(typename1)
                         == autosar_types.character_types.get(typename2)
                 {
@@ -75,9 +75,9 @@ fn find_group_replacements(autosar_types: &mut AutosarDataTypes) -> FxHashMap<St
 
     for idx1 in 0..(group_typenames.len() - 1) {
         let typename1 = &group_typenames[idx1];
-        if group_replacements.get(typename1).is_none() {
+        if !group_replacements.contains_key(typename1) {
             for typename2 in group_typenames.iter().skip(idx1 + 1) {
-                if group_replacements.get(typename2).is_none()
+                if !group_replacements.contains_key(typename2)
                     && autosar_types.group_types.get(typename1)
                         == autosar_types.group_types.get(typename2)
                 {
@@ -100,9 +100,9 @@ fn find_elemtype_replacements(autosar_types: &mut AutosarDataTypes) -> FxHashMap
     elem_typenames.sort_by(dedup_keycmp);
     for idx1 in 0..(elem_typenames.len() - 1) {
         let typename1 = &elem_typenames[idx1];
-        if elem_replacements.get(typename1).is_none() {
+        if !elem_replacements.contains_key(typename1) {
             for typename2 in elem_typenames.iter().skip(idx1 + 1) {
-                if elem_replacements.get(typename2).is_none()
+                if !elem_replacements.contains_key(typename2)
                     && autosar_types.element_types.get(typename1)
                         == autosar_types.element_types.get(typename2)
                 {

@@ -16,9 +16,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
         for ec_item in group_type.items() {
             // for each sub-element of the current element type (skipping groups)
             if let ElementCollectionItem::Element(elem) = ec_item {
-                if element_names.get(&elem.name).is_none() {
-                    element_names.insert(elem.name.clone());
-                }
+                element_names.insert(elem.name.clone());
             }
         }
     }

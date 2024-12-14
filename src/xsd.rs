@@ -313,7 +313,7 @@ fn parse_element(
         let ordered = mm_attributes
             .get("pureMM.isOrdered")
             .is_some_and(|val| val == "true");
-        let splittable = mm_attributes.get("atpSplitable").is_some();
+        let splittable = mm_attributes.contains_key("atpSplitable");
         let restrict_std = get_restrict_to_standard(&mm_attributes);
 
         Ok(XsdElement {
@@ -362,7 +362,7 @@ fn parse_element(
             let ordered = mm_attributes
                 .get("pureMM.isOrdered")
                 .is_some_and(|val| val == "true");
-            let splittable = mm_attributes.get("atpSplitable").is_some();
+            let splittable = mm_attributes.contains_key("atpSplitable");
             let restrict_std = get_restrict_to_standard(&mm_attributes);
 
             Ok(XsdElement {
@@ -1187,7 +1187,7 @@ fn get_required_attribute_value<'a>(
 fn parse_occurs_attribute(attr_occurs: Option<&str>) -> Result<usize, String> {
     if let Some(occurs_str) = attr_occurs {
         if occurs_str == "unbounded" {
-            Ok(std::usize::MAX)
+            Ok(usize::MAX)
         } else {
             match occurs_str.parse() {
                 Ok(val) => Ok(val),

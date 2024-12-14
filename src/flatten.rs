@@ -33,10 +33,9 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
     while !work_queue.is_empty() {
         match work_queue.pop().unwrap() {
             WorkQueueItem::ElementType(cur_element_typeref) => {
-                if autosar_schema
+                if !autosar_schema
                     .element_types
-                    .get(&cur_element_typeref)
-                    .is_none()
+                    .contains_key(&cur_element_typeref)
                 {
                     if let Some(XsdType::Complex(complex_type)) =
                         data.types.get(&cur_element_typeref)
@@ -61,10 +60,9 @@ pub(crate) fn flatten_schema(data: &Xsd) -> Result<AutosarDataTypes, String> {
                 }
             }
             WorkQueueItem::CharacterType(cur_char_typeref) => {
-                if autosar_schema
+                if !autosar_schema
                     .character_types
-                    .get(&cur_char_typeref)
-                    .is_none()
+                    .contains_key(&cur_char_typeref)
                 {
                     if let Some(XsdType::Simple(simple_type)) = data.types.get(&cur_char_typeref) {
                         let chartype = flatten_simple_type(data, simple_type, &cur_char_typeref)?;
@@ -466,7 +464,7 @@ fn flatten_sequence<'a>(
                         } else if let XsdModelGroupItem::Group(group_ref) = &sequence.items[idx] {
                             // the choice came from a group, we'll only keep a reference to that group here
                             elements.push(ElementCollectionItem::GroupRef(group_ref.clone()));
-                        } else if data.groups.get(&format!("AR:{name}")).is_some() {
+                        } else if data.groups.contains_key(&format!("AR:{name}")) {
                             // the choice came from a group, we'll only keep a reference to that group here
                             elements.push(ElementCollectionItem::GroupRef(format!("AR:{name}")));
                         } else {

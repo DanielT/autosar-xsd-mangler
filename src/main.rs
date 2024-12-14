@@ -277,12 +277,12 @@ fn sanity_check(autosar_types: &AutosarDataTypes) {
         for item in group.items() {
             match item {
                 ElementCollectionItem::Element(elem) => {
-                    if autosar_types.element_types.get(&elem.typeref).is_none() {
+                    if !autosar_types.element_types.contains_key(&elem.typeref) {
                         println!("sanity check failed - in group [{groupname}] element <{elem:#?}> references non-existent type [{}]", elem.typeref);
                     }
                 }
                 ElementCollectionItem::GroupRef(gref) => {
-                    if autosar_types.group_types.get(gref).is_none() {
+                    if !autosar_types.group_types.contains_key(gref) {
                         println!("sanity check failed - in group [{groupname}] group ref {gref} has no target");
                     }
                 }
@@ -291,12 +291,12 @@ fn sanity_check(autosar_types: &AutosarDataTypes) {
     }
     for (typename, elemcontent) in &autosar_types.element_types {
         if let Some(group_name) = elemcontent.group_ref() {
-            if autosar_types.group_types.get(&group_name).is_none() {
+            if !autosar_types.group_types.contains_key(&group_name) {
                 println!("sanity check failed - type [{typename}] references non-existent group [{group_name}]");
             }
         }
         for attr in elemcontent.attributes() {
-            if autosar_types.character_types.get(&attr.attr_type).is_none() {
+            if !autosar_types.character_types.contains_key(&attr.attr_type) {
                 println!(
                         "sanity check failed - in type [{typename}] attribute {} references non-existent type [{}]",
                         attr.name, attr.attr_type
