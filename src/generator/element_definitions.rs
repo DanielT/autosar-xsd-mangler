@@ -143,7 +143,7 @@ pub(crate) fn generate_docstrings(docstring_ids: &FxHashMap<String, usize>) -> S
 
     let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
     output.push_str(&format!(
-        "pub(crate) const ELEMENT_DOCSTRINGS: [&'static str; {}] = [\n",
+        "pub(crate) const ELEMENT_DOCSTRINGS: [&str; {}] = [\n",
         docstrings.len()
     ));
     for ds in docstrings {
