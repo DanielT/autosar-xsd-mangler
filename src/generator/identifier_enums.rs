@@ -167,7 +167,7 @@ impl {enum_name} {{
         if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
             return Err(Parse{enum_name}Error);
         }}
-        Ok(unsafe {{ std::mem::transmute::<u16, Self>(item_idx as u16) }})
+        Ok(unsafe {{ core::mem::transmute::<u16, Self>(item_idx as u16) }})
     }}
 
     /// get the str corresponding to an item
@@ -179,21 +179,21 @@ impl {enum_name} {{
     }}
 }}
 
-impl std::str::FromStr for {enum_name} {{
+impl core::str::FromStr for {enum_name} {{
     type Err = Parse{enum_name}Error;
     fn from_str(input: &str) -> Result<Self, Self::Err> {{
         Self::from_bytes(input.as_bytes())
     }}
 }}
 
-impl std::fmt::Debug for {enum_name} {{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
+impl core::fmt::Debug for {enum_name} {{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
         f.write_str({enum_name}::STRING_TABLE[*self as usize])
     }}
 }}
 
-impl std::fmt::Display for {enum_name} {{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
+impl core::fmt::Display for {enum_name} {{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
         f.write_str({enum_name}::STRING_TABLE[*self as usize])
     }}
 }}
