@@ -1,13 +1,12 @@
 use crate::XsdFileInfo;
-use std::fmt::Write;
 use std::fs::File;
 use std::io::Write as IoWrite;
 
 pub(crate) fn generate(xsd_config: &[XsdFileInfo]) {
-    let mut match_lines = String::new();
-    let mut filename_lines = String::new();
-    let mut desc_lines = String::new();
-    let mut from_lines = String::new();
+    let mut match_lines = Vec::new();
+    let mut filename_lines = Vec::new();
+    let mut desc_lines = Vec::new();
+    let mut from_lines = Vec::new();
     let mut generated = String::from(
         r"use num_traits::cast::FromPrimitive;
 
@@ -25,47 +24,44 @@ pub enum AutosarVersion {
     );
 
     for (idx, xsd_file_info) in xsd_config.iter().enumerate() {
-        writeln!(
-            generated,
-            r#"    /// {} - xsd file name: `{}`"#,
-            xsd_file_info.desc, xsd_file_info.name
-        )
-        .unwrap();
-        writeln!(
-            generated,
-            r#"    {} = 0x{:x},"#,
+        // generate the content of enum AutosarVersion directly
+        generated.push_str(&format!(
+            "    /// {} - xsd file name: `{}`\n    {} = 0x{:x},\n",
+            xsd_file_info.desc,
+            xsd_file_info.name,
             xsd_file_info.ident,
             1 << idx
-        )
-        .unwrap();
-        writeln!(
-            match_lines,
-            r#"            "{}" => Ok(Self::{}),"#,
+        ));
+
+        // generate the match arms for the `from_str()` method
+        match_lines.push(format!(
+            r#"            "{}" => Ok(Self::{})"#,
             xsd_file_info.name, xsd_file_info.ident
-        )
-        .unwrap();
-        writeln!(
-            filename_lines,
-            r#"            Self::{} => "{}","#,
+        ));
+        // generate the match arms for the `filename()` method
+        filename_lines.push(format!(
+            r#"            Self::{} => "{}""#,
             xsd_file_info.ident, xsd_file_info.name
-        )
-        .unwrap();
-        writeln!(
-            desc_lines,
-            r#"            Self::{} => "{}","#,
+        ));
+        // generate the match arms for the `describe()` method
+        desc_lines.push(format!(
+            r#"            Self::{} => "{}""#,
             xsd_file_info.ident, xsd_file_info.desc
-        )
-        .unwrap();
-        writeln!(
-            from_lines,
-            r#"            0x{:x} => Some(Self::{}),"#,
-            1 << idx, xsd_file_info.ident
-        )
-        .unwrap();
+        ));
+        // generate the match arms for the `from_u32()` method
+        from_lines.push(format!(
+            r#"            0x{:x} => Some(Self::{})"#,
+            1 << idx,
+            xsd_file_info.ident
+        ));
     }
+    let match_lines = match_lines.join(",\n");
+    let filename_lines = filename_lines.join(",\n");
+    let desc_lines = desc_lines.join(",\n");
+    let from_lines = from_lines.join(",\n");
+
     let lastident = xsd_config[xsd_config.len() - 1].ident;
-    writeln!(
-        generated,
+    generated.push_str(&format!(
         r#"}}
 
 impl AutosarVersion {{
@@ -73,7 +69,7 @@ impl AutosarVersion {{
     #[must_use]
     pub fn filename(&self) -> &'static str {{
         match self {{
-{filename_lines}
+{filename_lines},
         }}
     }}
 
@@ -84,7 +80,7 @@ impl AutosarVersion {{
     #[must_use]
     pub fn describe(&self) -> &'static str {{
         match self {{
-{desc_lines}
+{desc_lines},
         }}
     }}
 
@@ -107,7 +103,7 @@ impl std::str::FromStr for AutosarVersion {{
     type Err = ParseAutosarVersionError;
     fn from_str(input: &str) -> Result<Self, Self::Err> {{
         match input {{
-{match_lines}
+{match_lines},
             _ => Err(ParseAutosarVersionError),
         }}
     }}
@@ -131,14 +127,13 @@ impl FromPrimitive for AutosarVersion {{
     #[inline]
     fn from_u64(n: u64) -> Option<Self> {{
         match n {{
-{from_lines}
+{from_lines},
             _ => None,
         }}
     }}
 }}
 "#,
-    )
-    .unwrap();
+    ));
 
     let mut file = File::create("gen/autosarversion.rs").unwrap();
     file.write_all(generated.as_bytes()).unwrap();

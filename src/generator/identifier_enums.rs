@@ -126,7 +126,8 @@ pub struct Parse{enum_name}Error;
 ",
         )
         .unwrap();
-    writeln!(generated, "/// {enum_docstring}\npub enum {enum_name} {{").unwrap();
+    generated.push_str("#[rustfmt::skip]\n");
+    generated.push_str(&format!("/// {enum_docstring}\npub enum {enum_name} {{\n"));
     let mut hash_sorted_item_names = item_names.to_owned();
     hash_sorted_item_names.sort_by(|k1, k2| {
         perfect_hash::get_index(k1, disps, item_names.len()).cmp(&perfect_hash::get_index(
@@ -144,10 +145,10 @@ pub struct Parse{enum_name}Error;
     writeln!(generated, "}}").unwrap();
 
     let length = item_names.len();
-    writeln!(
-        generated,
+    generated.push_str(&format!(
         r##"
 impl {enum_name} {{
+    #[rustfmt::skip]
     const STRING_TABLE: [&'static str; {length}] = {hash_sorted_item_names:?};
 
     /// derive an enum entry from an input string using a perfect hash function
@@ -156,16 +157,19 @@ impl {enum_name} {{
     ///
     /// [`Parse{enum_name}Error`]: The input string did not match the name of any enum item
     pub fn from_bytes(input: &[u8]) -> Result<Self, Parse{enum_name}Error> {{
+        #[rustfmt::skip]
         static DISPLACEMENTS: [(u16, u16); {displen}] = {disps:?};
+
         let (g, f1, f2) = hashfunc(input);
         let (d1, d2) = DISPLACEMENTS[(g % {displen}) as usize];
-        let item_idx = u32::from(d2).wrapping_add(f1.wrapping_mul(u32::from(d1))).wrapping_add(f2) as usize % {length};
+        let item_idx = u32::from(d2)
+            .wrapping_add(f1.wrapping_mul(u32::from(d1)))
+            .wrapping_add(f2) as usize
+            % {length};
         if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
             return Err(Parse{enum_name}Error);
         }}
-        Ok(unsafe {{
-            std::mem::transmute::<u16, Self>(item_idx as u16)
-        }})
+        Ok(unsafe {{ std::mem::transmute::<u16, Self>(item_idx as u16) }})
     }}
 
     /// get the str corresponding to an item
@@ -196,8 +200,7 @@ impl std::fmt::Display for {enum_name} {{
     }}
 }}
 "##
-    )
-    .unwrap();
+    ));
 
     generated
 }

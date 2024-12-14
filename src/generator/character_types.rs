@@ -1,11 +1,8 @@
 use crate::generator::name_to_identifier;
 use crate::{AutosarDataTypes, CharacterDataType};
 use rustc_hash::FxHashMap;
-use std::fmt::Write;
 
 pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
-    let mut generated = String::new();
-
     let regexes: FxHashMap<String, String> = VALIDATOR_REGEX_MAPPING
         .iter()
         .map(|(regex, name)| ((*regex).to_string(), (*name).to_string()))
@@ -14,12 +11,10 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
     let mut ctnames: Vec<&String> = autosar_schema.character_types.keys().collect();
     ctnames.sort();
 
-    writeln!(
-        generated,
-        "pub(crate) const CHARACTER_DATA: [CharacterDataSpec; {}] = [",
+    let mut generated = format!(
+        "#[rustfmt::skip]\npub(crate) const CHARACTER_DATA: [CharacterDataSpec; {}] = [\n",
         ctnames.len()
-    )
-    .unwrap();
+    );
     for ctname in &ctnames {
         let chtype = autosar_schema.character_types.get(*ctname).unwrap();
 

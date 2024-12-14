@@ -88,19 +88,34 @@ pub(crate) fn generate_types(autosar_schema: &AutosarDataTypes) {
     let mut generated = String::from(
         r#"// This file is @generated
 
-use crate::*;
 use crate::regex::*;
+use crate::*;
 
 #[cfg(feature = "docstrings")]
 macro_rules! element {
     ($namepart:ident, $etype:literal, $mult:ident, $ordered:literal, $splittable:literal, $stdrestrict:ident, $docid:expr) => {
-        ElementDefinition{name: ElementName::$namepart, elemtype: $etype, multiplicity: ElementMultiplicity::$mult, ordered: $ordered, splittable: $splittable, restrict_std: StdRestrict::$stdrestrict, docstring: $docid}
+        ElementDefinition {
+            name: ElementName::$namepart,
+            elemtype: $etype,
+            multiplicity: ElementMultiplicity::$mult,
+            ordered: $ordered,
+            splittable: $splittable,
+            restrict_std: StdRestrict::$stdrestrict,
+            docstring: $docid,
+        }
     };
 }
 #[cfg(not(feature = "docstrings"))]
 macro_rules! element {
     ($namepart:ident, $etype:literal, $mult:ident, $ordered:literal, $splittable:literal, $stdrestrict:ident, $docid:expr) => {
-        ElementDefinition{name: ElementName::$namepart, elemtype: $etype, multiplicity: ElementMultiplicity::$mult, ordered: $ordered, splittable: $splittable, restrict_std: StdRestrict::$stdrestrict}
+        ElementDefinition {
+            name: ElementName::$namepart,
+            elemtype: $etype,
+            multiplicity: ElementMultiplicity::$mult,
+            ordered: $ordered,
+            splittable: $splittable,
+            restrict_std: StdRestrict::$stdrestrict,
+        }
     };
 }
 
@@ -115,8 +130,6 @@ macro_rules! g {
         SubElement::Group($idx)
     };
 }
-
-
 
 "#,
     );
@@ -266,17 +279,23 @@ fn update_group_deps(
     }
 }
 
+const VERSION_INFO_CHUNK_SIZE: usize = 10;
+/// generate the array of version information for the elements
 fn generate_versions_array(versions_array: &[usize]) -> String {
     let mut generated = format!(
-        "\npub(crate) static VERSION_INFO: [u32; {}] = [",
+        "\n#[rustfmt::skip]\npub(crate) static VERSION_INFO: [u32; {}] = [\n",
         versions_array.len()
     );
-    let ver_str = versions_array
-        .iter()
-        .map(|val| format!("0x{val:x}"))
-        .collect::<Vec<String>>()
-        .join(", ");
-    generated.push_str(&ver_str);
+    for idx in (0..versions_array.len()).step_by(VERSION_INFO_CHUNK_SIZE) {
+        let chunk = &versions_array[idx..(idx + VERSION_INFO_CHUNK_SIZE).min(versions_array.len())];
+        let chunk_str = chunk
+            .iter()
+            .map(|val| format!("0x{val:06x}"))
+            .collect::<Vec<String>>()
+            .join(", ");
+        generated.push_str(&format!("    {},\n", chunk_str));
+    }
+
     generated.push_str("];\n");
     generated
 }

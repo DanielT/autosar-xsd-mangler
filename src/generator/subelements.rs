@@ -126,9 +126,10 @@ fn cmp_grouptypenames_subelems(
     }
 }
 
+const SUBELEMENT_CHUNK_SIZE: usize = 25;
 pub(crate) fn generate(items: &[GroupItem]) -> String {
     let mut generated = format!(
-        "\npub(crate) const SUBELEMENTS: [SubElement; {}] = [\n",
+        "\n#[rustfmt::skip]\npub(crate) const SUBELEMENTS: [SubElement; {}] = [\n",
         items.len()
     );
     let mut item_strings = vec![];
@@ -140,8 +141,8 @@ pub(crate) fn generate(items: &[GroupItem]) -> String {
             }
         });
     }
-    for idx in (0..item_strings.len()).step_by(100) {
-        let upper_idx = (idx + 100).min(item_strings.len());
+    for idx in (0..item_strings.len()).step_by(SUBELEMENT_CHUNK_SIZE) {
+        let upper_idx = (idx + SUBELEMENT_CHUNK_SIZE).min(item_strings.len());
         let slice_str = item_strings[idx..upper_idx].join(", ");
         generated.push_str("    ");
         generated.push_str(&slice_str);
