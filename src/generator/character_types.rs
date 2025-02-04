@@ -12,7 +12,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
     ctnames.sort();
 
     let mut generated = format!(
-        "#[rustfmt::skip]\npub(crate) const CHARACTER_DATA: [CharacterDataSpec; {}] = [\n",
+        "#[rustfmt::skip]\npub(crate) static CHARACTER_DATA: [CharacterDataSpec; {}] = [\n",
         ctnames.len()
     );
     for ctname in &ctnames {
@@ -73,7 +73,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
         .find(|(_, name)| **name == "AR:REF--SIMPLE")
         .expect("reference type \"AR:REF--SIMPLE\" not found ?!");
     generated.push_str(&format!(
-        "pub(crate) const REFERENCE_TYPE_IDX: u16 = {reference_type_idx};\n"
+        "pub(crate) static REFERENCE_TYPE_IDX: u16 = {reference_type_idx};\n"
     ));
 
     generated

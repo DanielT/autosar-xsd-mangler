@@ -80,7 +80,7 @@ pub(crate) fn generate(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\n#[rustfmt::skip]\npub(crate) const ELEMENTS: [ElementDefinition; {}] = [\n",
+        "\n#[rustfmt::skip]\npub(crate) static ELEMENTS: [ElementDefinition; {}] = [\n",
         elements.len()
     );
     for (idx, elem) in elements.iter().enumerate() {
@@ -98,7 +98,7 @@ pub(crate) fn generate(
         .position(|elem| elem.name == "AUTOSAR")
         .unwrap();
     generated.push_str(&format!(
-        "\npub(crate) const AUTOSAR_ELEMENT: u16 = {autosar_idx};\n"
+        "\npub(crate) static AUTOSAR_ELEMENT: u16 = {autosar_idx};\n"
     ));
 
     generated
@@ -144,7 +144,7 @@ pub(crate) fn generate_docstrings(docstring_ids: &FxHashMap<String, usize>) -> S
     let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
     output.push_str("#[rustfmt::skip]\n");
     output.push_str(&format!(
-        "pub(crate) const ELEMENT_DOCSTRINGS: [&str; {}] = [\n",
+        "pub(crate) static ELEMENT_DOCSTRINGS: [&str; {}] = [\n",
         docstrings.len()
     ));
     for ds in docstrings {

@@ -129,7 +129,7 @@ fn cmp_grouptypenames_subelems(
 const SUBELEMENT_CHUNK_SIZE: usize = 25;
 pub(crate) fn generate(items: &[GroupItem]) -> String {
     let mut generated = format!(
-        "\n#[rustfmt::skip]\npub(crate) const SUBELEMENTS: [SubElement; {}] = [\n",
+        "\n#[rustfmt::skip]\npub(crate) static SUBELEMENTS: [SubElement; {}] = [\n",
         items.len()
     );
     let mut item_strings = vec![];

@@ -114,7 +114,7 @@ pub(crate) fn generate(
         .map(|(idx, name)| (&***name, idx))
         .collect();
     let mut generated = format!(
-        "\n#[rustfmt::skip]\npub(crate) const ATTRIBUTES: [(AttributeName, u16, bool); {}] = [\n",
+        "\n#[rustfmt::skip]\npub(crate) static ATTRIBUTES: [(AttributeName, u16, bool); {}] = [\n",
         attributes_array.len()
     );
     generated.push_str(&build_attributes_string(

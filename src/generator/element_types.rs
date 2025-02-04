@@ -41,7 +41,7 @@ pub(crate) fn generate(
     let element_names_of_typename = build_elementnames_of_type_list(element_types);
 
     elemtypes.push_str(&format!(
-        "\n#[rustfmt::skip]\npub(crate) const DATATYPES: [ElementSpec; {}] = [\n",
+        "\n#[rustfmt::skip]\npub(crate) static DATATYPES: [ElementSpec; {}] = [\n",
         element_types.len()
     ));
     for (idx, etypename) in elemtypenames.iter().enumerate() {
@@ -108,7 +108,7 @@ pub(crate) fn generate(
 
     elemtypes.push_str("\n#[rustfmt::skip]");
     elemtypes.push_str(&format!(
-        "\npub(crate) const REF_ITEMS: [EnumItem; {}] = [\n    {},\n];\n",
+        "\npub(crate) static REF_ITEMS: [EnumItem; {}] = [\n    {},\n];\n",
         all_refstrings.len(),
         all_refstrings.join(",\n    ")
     ));
