@@ -112,7 +112,7 @@ pub(crate) struct XsdFileInfo {
     desc: &'static str,
 }
 
-const XSD_CONFIG: [XsdFileInfo; 21] = [
+const XSD_CONFIG: [XsdFileInfo; 22] = [
     XsdFileInfo {
         name: "AUTOSAR_4-0-1.xsd",
         ident: "Autosar_4_0_1",
@@ -217,6 +217,11 @@ const XSD_CONFIG: [XsdFileInfo; 21] = [
         name: "AUTOSAR_00053.xsd",
         ident: "Autosar_00053",
         desc: "AUTOSAR R24-11",
+    },
+    XsdFileInfo {
+        name: "AUTOSAR_00054.xsd",
+        ident: "Autosar_00054",
+        desc: "AUTOSAR R25-11",
     },
 ];
 
