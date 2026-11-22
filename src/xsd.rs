@@ -1011,6 +1011,14 @@ fn skip_annotation(parser: &mut EventReader<BufReader<File>>) -> Result<(), Stri
     Ok(())
 }
 
+/// Returns true if a comma-separated `stereotypes` appinfo text contains `name`.
+///
+/// Newer schemas combine stereotypes in one appinfo, e.g. `atpSplitable,atpVariation`
+/// on `AR-PACKAGES` and `ELEMENTS` in R25-11, so an exact match on the whole text misses them.
+fn has_stereotype(text: &str, name: &str) -> bool {
+    text.split(',').any(|stereotype| stereotype.trim() == name)
+}
+
 fn parse_annotation(
     parser: &mut EventReader<BufReader<File>>,
 ) -> Result<(HashMap<String, String>, Option<String>), String> {
@@ -1038,7 +1046,7 @@ fn parse_annotation(
                                 tagmap.insert(tagname, tagval);
                             }
                         }
-                    } else if source == "stereotypes" && text == "atpSplitable" {
+                    } else if source == "stereotypes" && has_stereotype(&text, "atpSplitable") {
                         tagmap.insert("atpSplitable".to_string(), "true".to_string());
                     }
                 } else {
@@ -1244,5 +1252,19 @@ impl XsdModelGroupItem {
             XsdModelGroupItem::Choice(_) => "CHOICE".to_string(),
             XsdModelGroupItem::Element(_) => "ELEMENT".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_stereotype;
+
+    #[test]
+    fn stereotype_matching_handles_combined_lists() {
+        assert!(has_stereotype("atpSplitable", "atpSplitable"));
+        assert!(has_stereotype("atpSplitable,atpVariation", "atpSplitable"));
+        assert!(has_stereotype("atpVariation, atpSplitable", "atpSplitable"));
+        assert!(!has_stereotype("atpVariation", "atpSplitable"));
+        assert!(!has_stereotype("atpSplitableExtra", "atpSplitable"));
     }
 }
