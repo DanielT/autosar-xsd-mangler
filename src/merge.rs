@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::{
     Attribute, AutosarDataTypes, CharacterDataType, Element, ElementAmount, ElementCollection,
-    ElementCollectionItem, ElementDataType, EnumDefinition,
+    ElementCollectionItem, ElementDataType, EnumDefinition, FxHashMap,
 };
 
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -132,7 +132,12 @@ fn merge_elem_types(
     input_xsd: &AutosarDataTypes,
     typename_input: &str,
 ) -> MergeItems {
-    let a = merged_xsd.element_types.get_mut(typename).unwrap();
+    let AutosarDataTypes {
+        element_types,
+        character_types,
+        ..
+    } = merged_xsd;
+    let a = element_types.get_mut(typename).unwrap();
     let b = input_xsd.element_types.get(typename_input).unwrap();
     let mut result = MergeItems::new();
 
@@ -154,7 +159,12 @@ fn merge_elem_types(
             result
                 .elem_types
                 .push(ElemOrGroup::Group(group_ref.clone(), group_ref_new.clone()));
-            result.append(&mut merge_attributes(attributes, attributes_new));
+            result.append(&mut merge_attributes(
+                attributes,
+                attributes_new,
+                character_types,
+                input_xsd,
+            ));
             for xtn in xsd_typenames_new {
                 // most of these are duplicates, but that doesn't matter
                 xsd_typenames.insert(xtn.to_owned());
@@ -172,7 +182,13 @@ fn merge_elem_types(
                 ..
             },
         ) => {
-            result.append(&mut merge_attributes(attributes, attributes_new));
+            result.append(&mut merge_attributes(
+                attributes,
+                attributes_new,
+                character_types,
+                input_xsd,
+            ));
+            separate_cross_merged_enum(character_types, input_xsd, basetype, basetype_new);
             result
                 .char_types
                 .push(((*basetype).to_string(), basetype_new.to_string()));
@@ -194,7 +210,13 @@ fn merge_elem_types(
             result
                 .elem_types
                 .push(ElemOrGroup::Group(group_ref.clone(), group_ref_new.clone()));
-            result.append(&mut merge_attributes(attributes, attributes_new));
+            result.append(&mut merge_attributes(
+                attributes,
+                attributes_new,
+                character_types,
+                input_xsd,
+            ));
+            separate_cross_merged_enum(character_types, input_xsd, basetype, basetype_new);
             result
                 .char_types
                 .push(((*basetype).to_string(), basetype_new.to_string()));
@@ -206,7 +228,12 @@ fn merge_elem_types(
                 ..
             },
         ) => {
-            result.append(&mut merge_attributes(attributes, attributes_new));
+            result.append(&mut merge_attributes(
+                attributes,
+                attributes_new,
+                character_types,
+                input_xsd,
+            ));
         }
         (_aa, _bb) => {
             // println!("mixed element types: {typename}={_aa:#?} - {typename_input}={_bb:#?}");
@@ -291,9 +318,11 @@ fn merge_group_types(
                             ..
                         }) => {
                             let typeref_input = typeref.clone();
-                            if !type_shapes_compatible(
-                                type_shape(merged_xsd, &typeref_input),
-                                type_shape(input_xsd, &typeref_input),
+                            if !element_types_compatible(
+                                merged_xsd,
+                                &typeref_input,
+                                input_xsd,
+                                &typeref_input,
                             ) {
                                 // a different type with the same name already exists in the merged data;
                                 // the older type must be stored under a new name to keep it separate
@@ -330,6 +359,7 @@ fn merge_group_types(
 /// Copy the element type `typename` from `input_xsd` into `merged_xsd` under a new name derived from
 /// the version, because `merged_xsd` already contains an incompatible type with the same name.
 /// The group of the copied type is renamed as well, so that it is not merged into the existing group.
+/// Likewise, its character data type is copied under a new name if the existing one is incompatible.
 fn copy_renamed_type(
     merged_xsd: &mut AutosarDataTypes,
     input_xsd: &AutosarDataTypes,
@@ -344,7 +374,22 @@ fn copy_renamed_type(
             | ElementDataType::Mixed { group_ref, .. } => {
                 *group_ref = format!("{group_ref}@{version_info:x}");
             }
-            ElementDataType::Characters { .. } => {}
+            ElementDataType::Characters { basetype, .. } => {
+                let input_chartype = input_xsd.character_types.get(basetype.as_str());
+                if !char_types_compatible(
+                    merged_xsd.character_types.get(basetype.as_str()),
+                    input_chartype,
+                ) {
+                    let new_basetype = format!("{basetype}@{version_info:x}");
+                    if let Some(chartype) = input_chartype {
+                        merged_xsd
+                            .character_types
+                            .entry(new_basetype.clone())
+                            .or_insert_with(|| chartype.clone());
+                    }
+                    *basetype = new_basetype;
+                }
+            }
         }
         merged_xsd.element_types.insert(new_name.clone(), new_type);
     }
@@ -354,6 +399,8 @@ fn copy_renamed_type(
 fn merge_attributes(
     attributes: &mut Vec<Attribute>,
     attributes_new: &Vec<Attribute>,
+    character_types: &mut FxHashMap<String, CharacterDataType>,
+    input_xsd: &AutosarDataTypes,
 ) -> MergeItems {
     let mut result = MergeItems::new();
     let mut insert_pos = 0;
@@ -365,6 +412,25 @@ fn merge_attributes(
             .map(|(idx, _att)| idx)
         {
             attributes[find_pos].version_info |= newattr.version_info;
+            // attributes are looked up by name only, so they can't be split by version like elements
+            let attr_type = &attributes[find_pos].attr_type;
+            if !char_types_compatible(
+                character_types
+                    .get(attr_type)
+                    .or_else(|| input_xsd.character_types.get(attr_type)),
+                input_xsd.character_types.get(&newattr.attr_type),
+            ) {
+                println!(
+                    "warning: attribute {}: type {attr_type} does not accept all values of the older type {}",
+                    newattr.name, newattr.attr_type
+                );
+            }
+            separate_cross_merged_enum(
+                character_types,
+                input_xsd,
+                &mut attributes[find_pos].attr_type,
+                &newattr.attr_type,
+            );
 
             result.char_types.push((
                 attributes[find_pos].attr_type.clone(),
@@ -379,6 +445,55 @@ fn merge_attributes(
     }
 
     result
+}
+
+/// Prevent enum items from leaking between differently named enum types.
+///
+/// `typename` (in the merged data) is about to be merged with the enum `typename_input`
+/// from an older version, because one attribute or element switched between the two types.
+/// Merging in place would add the items of `typename_input` to every user of `typename`.
+/// If `typename_input` contains items that the older version of `typename` does not have,
+/// the reference is pointed at a combined copy "`typename`|`typename_input`" instead.
+fn separate_cross_merged_enum(
+    character_types: &mut FxHashMap<String, CharacterDataType>,
+    input_xsd: &AutosarDataTypes,
+    typename: &mut String,
+    typename_input: &str,
+) {
+    // same type, or a combined type which already includes the input type
+    if typename.split('|').any(|part| part == typename_input) {
+        return;
+    }
+    let (Some(CharacterDataType::Enum(enumdef)), Some(CharacterDataType::Enum(enumdef_input))) = (
+        character_types.get(typename.as_str()),
+        input_xsd.character_types.get(typename_input),
+    ) else {
+        return;
+    };
+
+    // Items the merged enum may legitimately gain in the input version: those of the
+    // same-named enum in the input. Without such an enum, only the items it already has.
+    let reference_items = match input_xsd.character_types.get(typename.as_str()) {
+        Some(CharacterDataType::Enum(enumdef_same_name)) => &enumdef_same_name.enumitems,
+        _ => &enumdef.enumitems,
+    };
+    let adds_items = enumdef_input
+        .enumitems
+        .iter()
+        .any(|(item, _)| !reference_items.iter().any(|(refitem, _)| refitem == item));
+    if !adds_items {
+        return;
+    }
+
+    let combined_name = format!("{typename}|{typename_input}");
+    if !character_types.contains_key(&combined_name) {
+        let combined = CharacterDataType::Enum(EnumDefinition {
+            name: combined_name.clone(),
+            enumitems: enumdef.enumitems.clone(),
+        });
+        character_types.insert(combined_name.clone(), combined);
+    }
+    *typename = combined_name;
 }
 
 fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) {
@@ -471,40 +586,73 @@ fn element_is_compatible(
                 typeref: typeref_new,
                 ..
             }),
-        ) => {
-            // the merged element may have been copied from the input during the current merge,
-            // in which case its type has not been copied yet
-            let shape = type_shape(merged_xsd, typeref).or_else(|| type_shape(input_xsd, typeref));
-            let shape_new = type_shape(input_xsd, typeref_new);
-            if !type_shapes_compatible(shape, shape_new) {
-                return false;
-            }
+        ) => element_types_compatible(merged_xsd, typeref, input_xsd, typeref_new),
+        _ => true,
+    }
+}
 
-            let character_types = &merged_xsd.character_types;
-            let character_types_new = &input_xsd.character_types;
-            matches!(
-                (
-                    character_types.get(typeref),
-                    character_types_new.get(typeref_new),
-                ),
-                (
-                    Some(CharacterDataType::Pattern { .. }),
-                    Some(CharacterDataType::Pattern { .. }),
-                ) | (
-                    Some(CharacterDataType::Enum(_)),
-                    Some(CharacterDataType::Enum(_))
-                ) | (
-                    Some(CharacterDataType::String { .. }),
-                    Some(CharacterDataType::String { .. }),
-                ) | (
-                    Some(CharacterDataType::UnsignedInteger),
-                    Some(CharacterDataType::UnsignedInteger),
-                ) | (
-                    Some(CharacterDataType::Double),
-                    Some(CharacterDataType::Double)
-                ) | (None, None)
-            )
-        }
+/// Can the content of the element type `typename_input` (from an older version) be merged into
+/// the element type `typename` in the merged data, without rejecting any content that was valid before?
+fn element_types_compatible(
+    merged_xsd: &AutosarDataTypes,
+    typename: &str,
+    input_xsd: &AutosarDataTypes,
+    typename_input: &str,
+) -> bool {
+    // the merged type may have been copied from the input during the current merge,
+    // in which case it (and its character data type) has not been copied yet
+    let shape = type_shape(merged_xsd, typename).or_else(|| type_shape(input_xsd, typename));
+    let shape_input = type_shape(input_xsd, typename_input);
+    if !type_shapes_compatible(shape, shape_input) {
+        return false;
+    }
+
+    let basetype = merged_xsd
+        .element_types
+        .get(typename)
+        .or_else(|| input_xsd.element_types.get(typename))
+        .and_then(ElementDataType::basetype);
+    let basetype_input = input_xsd
+        .element_types
+        .get(typename_input)
+        .and_then(ElementDataType::basetype);
+    match (basetype, basetype_input) {
+        (Some(basetype), Some(basetype_input)) => char_types_compatible(
+            merged_xsd
+                .character_types
+                .get(basetype)
+                .or_else(|| input_xsd.character_types.get(basetype)),
+            input_xsd.character_types.get(basetype_input),
+        ),
+        _ => true,
+    }
+}
+
+/// Can character data of type `older` be merged into the character data type `merged`?
+///
+/// Enums are merged item by item, and patterns of the same type are assumed to
+/// evolve compatibly (the newest pattern is kept). Any other change of the
+/// character data type is only compatible if the merged type accepts arbitrary strings.
+fn char_types_compatible(
+    merged: Option<&CharacterDataType>,
+    older: Option<&CharacterDataType>,
+) -> bool {
+    match (merged, older) {
+        (Some(merged), Some(older)) => matches!(
+            (merged, older),
+            (CharacterDataType::String { .. }, _)
+                | (CharacterDataType::Enum(_), CharacterDataType::Enum(_))
+                | (
+                    CharacterDataType::Pattern { .. },
+                    CharacterDataType::Pattern { .. }
+                )
+                | (
+                    CharacterDataType::UnsignedInteger,
+                    CharacterDataType::UnsignedInteger
+                )
+                | (CharacterDataType::Double, CharacterDataType::Double)
+        ),
+        // the type is unknown on at least one side, so there is nothing to compare
         _ => true,
     }
 }
