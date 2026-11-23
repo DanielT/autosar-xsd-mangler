@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use super::{
-    Attribute, AutosarDataTypes, CharacterDataType, Element, ElementCollection,
-    ElementCollectionItem, ElementDataType, EnumDefinition, FxHashMap,
+    Attribute, AutosarDataTypes, CharacterDataType, Element, ElementAmount, ElementCollection,
+    ElementCollectionItem, ElementDataType, EnumDefinition,
 };
 
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -222,7 +222,8 @@ fn merge_group_types(
     input_xsd: &AutosarDataTypes,
     typename_input: &str,
 ) -> Result<MergeItems, String> {
-    let element_collection = merged_xsd.group_types.get_mut(typename).unwrap();
+    // work on a copy of the group, so that merged_xsd remains available for type lookups and insertions
+    let mut element_collection = merged_xsd.group_types.get(typename).unwrap().clone();
     let element_collection_new = input_xsd.group_types.get(typename_input).unwrap();
     let mut insert_pos: usize = 0;
 
@@ -237,25 +238,14 @@ fn merge_group_types(
 
     let mut typesvec = MergeItems::new();
     // let is_sequence = if let ElementCollection::Sequence { .. } = element_collection {true} else {false};
-    match element_collection {
+    match &mut element_collection {
         ElementCollection::Choice { sub_elements, .. }
         | ElementCollection::Sequence { sub_elements, .. } => {
             for newelem in element_collection_new.items() {
-                if let Some(find_pos) = sub_elements
-                    .iter()
-                    .enumerate()
-                    .find(|(_idx, e)| {
-                        e.name() == newelem.name()
-                            && element_is_compatible(
-                                e,
-                                newelem,
-                                &merged_xsd.character_types,
-                                &input_xsd.character_types,
-                            )
-                    })
-                    // .find(|(_idx, e)| e.name() == newelem.name())
-                    .map(|(idx, _e)| idx)
-                {
+                if let Some(find_pos) = sub_elements.iter().position(|e| {
+                    e.name() == newelem.name()
+                        && element_is_compatible(e, newelem, merged_xsd, input_xsd)
+                }) {
                     // if is_sequence && find_pos < insert_pos {
                     //     println!("ordering difference? {src_typename} -> elem: {}, find_pos: {find_pos} < insert pos {insert_pos}\n{sub_elements:#?}", newelem.name());
                     // }
@@ -293,12 +283,30 @@ fn merge_group_types(
                     //                 // }
                     insert_pos = find_pos + 1;
                 } else {
-                    sub_elements.insert(insert_pos, newelem.clone());
-                    match &newelem {
-                        ElementCollectionItem::Element(Element { typeref, .. }) => {
+                    let mut newelem = newelem.clone();
+                    match &mut newelem {
+                        ElementCollectionItem::Element(Element {
+                            typeref,
+                            version_info,
+                            ..
+                        }) => {
+                            let typeref_input = typeref.clone();
+                            if !type_shapes_compatible(
+                                type_shape(merged_xsd, &typeref_input),
+                                type_shape(input_xsd, &typeref_input),
+                            ) {
+                                // a different type with the same name already exists in the merged data;
+                                // the older type must be stored under a new name to keep it separate
+                                *typeref = copy_renamed_type(
+                                    merged_xsd,
+                                    input_xsd,
+                                    &typeref_input,
+                                    *version_info,
+                                );
+                            }
                             typesvec
                                 .elem_types
-                                .push(ElemOrGroup::Element(typeref.clone(), typeref.clone()));
+                                .push(ElemOrGroup::Element(typeref.clone(), typeref_input));
                         }
                         ElementCollectionItem::GroupRef(typeref) => {
                             typesvec
@@ -306,13 +314,41 @@ fn merge_group_types(
                                 .push(ElemOrGroup::Group(typeref.clone(), typeref.clone()));
                         }
                     }
+                    sub_elements.insert(insert_pos, newelem);
 
                     insert_pos += 1;
                 }
             }
         }
     }
+    merged_xsd
+        .group_types
+        .insert(typename.to_owned(), element_collection);
     Ok(typesvec)
+}
+
+/// Copy the element type `typename` from `input_xsd` into `merged_xsd` under a new name derived from
+/// the version, because `merged_xsd` already contains an incompatible type with the same name.
+/// The group of the copied type is renamed as well, so that it is not merged into the existing group.
+fn copy_renamed_type(
+    merged_xsd: &mut AutosarDataTypes,
+    input_xsd: &AutosarDataTypes,
+    typename: &str,
+    version_info: usize,
+) -> String {
+    let new_name = format!("{typename}@{version_info:x}");
+    if !merged_xsd.element_types.contains_key(&new_name) {
+        let mut new_type = input_xsd.element_types.get(typename).unwrap().clone();
+        match &mut new_type {
+            ElementDataType::Elements { group_ref, .. }
+            | ElementDataType::Mixed { group_ref, .. } => {
+                *group_ref = format!("{group_ref}@{version_info:x}");
+            }
+            ElementDataType::Characters { .. } => {}
+        }
+        merged_xsd.element_types.insert(new_name.clone(), new_type);
+    }
+    new_name
 }
 
 fn merge_attributes(
@@ -373,11 +409,60 @@ fn merge_enums(enumdef: &mut EnumDefinition, enumdef_new: &EnumDefinition) {
     }
 }
 
+/// The content model of an element type, used to decide if two element types can be merged
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeShape {
+    Characters,
+    Mixed,
+    Sequence,
+    Choice,
+    Bag,
+}
+
+fn type_shape(autosar_types: &AutosarDataTypes, typename: &str) -> Option<TypeShape> {
+    match autosar_types.element_types.get(typename)? {
+        ElementDataType::Characters { .. } => Some(TypeShape::Characters),
+        ElementDataType::Mixed { .. } => Some(TypeShape::Mixed),
+        ElementDataType::Elements { group_ref, .. } => {
+            match autosar_types.group_types.get(group_ref)? {
+                ElementCollection::Sequence { .. } => Some(TypeShape::Sequence),
+                ElementCollection::Choice {
+                    amount: ElementAmount::Any,
+                    ..
+                } => Some(TypeShape::Bag),
+                ElementCollection::Choice { .. } => Some(TypeShape::Choice),
+            }
+        }
+    }
+}
+
+/// Can content of shape `older` be merged into a type of shape `merged`?
+/// This is possible if the shapes are equal, or if `merged` accepts everything that `older` accepts.
+fn type_shapes_compatible(merged: Option<TypeShape>, older: Option<TypeShape>) -> bool {
+    match (merged, older) {
+        (Some(merged), Some(older)) => {
+            merged == older
+                || matches!(
+                    (merged, older),
+                    (
+                        TypeShape::Mixed,
+                        TypeShape::Characters
+                            | TypeShape::Sequence
+                            | TypeShape::Choice
+                            | TypeShape::Bag
+                    ) | (TypeShape::Bag, TypeShape::Sequence | TypeShape::Choice)
+                )
+        }
+        // the type is unknown on at least one side, so there is nothing to compare
+        _ => true,
+    }
+}
+
 fn element_is_compatible(
     item: &ElementCollectionItem,
     item_new: &ElementCollectionItem,
-    character_types: &FxHashMap<String, CharacterDataType>,
-    character_types_new: &FxHashMap<String, CharacterDataType>,
+    merged_xsd: &AutosarDataTypes,
+    input_xsd: &AutosarDataTypes,
 ) -> bool {
     match (item, item_new) {
         (
@@ -387,6 +472,16 @@ fn element_is_compatible(
                 ..
             }),
         ) => {
+            // the merged element may have been copied from the input during the current merge,
+            // in which case its type has not been copied yet
+            let shape = type_shape(merged_xsd, typeref).or_else(|| type_shape(input_xsd, typeref));
+            let shape_new = type_shape(input_xsd, typeref_new);
+            if !type_shapes_compatible(shape, shape_new) {
+                return false;
+            }
+
+            let character_types = &merged_xsd.character_types;
+            let character_types_new = &input_xsd.character_types;
             matches!(
                 (
                     character_types.get(typeref),
