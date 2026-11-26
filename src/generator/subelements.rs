@@ -1,4 +1,6 @@
-use crate::generator::{GroupItem, MergedElementDataType, SimpleElement, SubelementsInfo};
+use crate::generator::{
+    name_to_identifier, GroupItem, MergedElementDataType, SimpleElement, SubelementsInfo,
+};
 use crate::{Element, ElementCollectionItem};
 use rustc_hash::FxHashMap;
 
@@ -126,8 +128,8 @@ fn cmp_grouptypenames_subelems(
     }
 }
 
-const SUBELEMENT_CHUNK_SIZE: usize = 25;
-pub(crate) fn generate(items: &[GroupItem]) -> String {
+const SUBELEMENT_CHUNK_SIZE: usize = 8;
+pub(crate) fn generate(items: &[GroupItem], element_definitions_array: &[SimpleElement]) -> String {
     let mut generated = format!(
         "\n#[rustfmt::skip]\npub(crate) static SUBELEMENTS: [SubElement; {}] = [\n",
         items.len()
@@ -135,7 +137,10 @@ pub(crate) fn generate(items: &[GroupItem]) -> String {
     let mut item_strings = vec![];
     for item in items {
         item_strings.push(match item {
-            GroupItem::ElementRef(idx) => format!("e!({idx})"),
+            GroupItem::ElementRef(idx) => format!(
+                "e!({}, {idx})",
+                name_to_identifier(&element_definitions_array[*idx].name)
+            ),
             GroupItem::GroupRef(idx) => {
                 format!("g!({idx})")
             }

@@ -87,7 +87,7 @@ impl AutosarVersion {{
     /// make an `AutosarVersion` from a u32 value
     ///
     /// All `AutosarVersion`s are associated with a power of two u32 value, for example `Autosar_4_3_0` == 0x100
-    /// If the given value is a valid constant of `AutosarVersion`, the enum value will be returnd
+    /// If the given value is a valid constant of `AutosarVersion`, the enum value will be returned
     ///
     /// This is useful in order to decode version masks
     #[must_use]

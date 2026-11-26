@@ -1,9 +1,9 @@
-use crate::generator::{name_to_identifier, SimpleElement};
+use crate::generator::SimpleElement;
 use crate::{ElementAmount, ElementCollectionItem, XsdRestrictToStandard};
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 
-use super::MergedElementDataType;
+use super::{MergedElementDataType, VersionMasks};
 
 pub(crate) fn build_info(
     element_types: &FxHashMap<String, MergedElementDataType>,
@@ -71,6 +71,7 @@ pub(crate) fn generate(
     element_types: &FxHashMap<String, MergedElementDataType>,
     elements: &[SimpleElement],
     docstring_ids: &FxHashMap<String, usize>,
+    version_masks: &VersionMasks,
 ) -> String {
     let mut elemtypenames: Vec<&String> = element_types.keys().collect();
     elemtypenames.sort();
@@ -87,9 +88,32 @@ pub(crate) fn generate(
         generated.push_str(&build_element_string(
             elem,
             &elemtype_nameidx,
-            docstring_ids,
+            version_masks,
             idx,
         ));
+    }
+    generated.push_str("];\n");
+
+    // the docstring ids are stored separately, so that the ELEMENTS array is smaller when the docstrings feature is disabled
+    generated.push_str(&format!(
+        "\n#[cfg(feature = \"docstrings\")]\n#[rustfmt::skip]\npub(crate) static ELEMENT_DOCSTRING_IDS: [u16; {}] = [\n",
+        elements.len()
+    ));
+    let docstring_id_strs: Vec<String> = elements
+        .iter()
+        .map(|elem| {
+            let id = elem
+                .docstring
+                .as_ref()
+                .and_then(|ds| docstring_ids.get(ds))
+                .copied()
+                .unwrap_or(NO_DOCSTRING);
+            assert!(id <= NO_DOCSTRING);
+            format!("{id}")
+        })
+        .collect();
+    for chunk in docstring_id_strs.chunks(20) {
+        generated.push_str(&format!("    {},\n", chunk.join(", ")));
     }
     generated.push_str("];\n");
 
@@ -104,28 +128,24 @@ pub(crate) fn generate(
     generated
 }
 
+/// marker value in `ELEMENT_DOCSTRING_IDS` for elements without a docstring
+const NO_DOCSTRING: usize = u16::MAX as usize;
+
 fn build_element_string(
     elem: &SimpleElement,
     elemtype_nameidx: &FxHashMap<&str, usize>,
-    docstring_ids: &FxHashMap<String, usize>,
+    version_masks: &VersionMasks,
     idx: usize,
 ) -> String {
-    // let mut sub_element_strings: Vec<String> = Vec::new();
-    let elem_docstring_id = elem
-        .docstring
-        .as_ref()
-        .and_then(|ds| docstring_ids.get(ds))
-        .copied();
     let restrict_txt = restrict_std_to_text(elem.restrict_std);
     format!(
-        "    /* {idx:4} */ element!({}, {}, {:?}, {}, 0x{:X}, {}, {:?}),\n",
-        name_to_identifier(&elem.name),
+        "    /* {idx:4} {} */ element!({}, {:?}, {}, {}, {}),\n",
+        elem.name,
         elemtype_nameidx.get(&*elem.typeref).unwrap(),
         elem.amount,
         elem.ordered,
-        elem.splittable_ver,
+        version_masks.idx(elem.splittable_ver),
         restrict_txt,
-        elem_docstring_id,
     )
 }
 
@@ -141,14 +161,30 @@ pub(crate) fn generate_docstrings(docstring_ids: &FxHashMap<String, usize>) -> S
     let mut docstrings: Vec<String> = docstring_ids.keys().cloned().collect();
     docstrings.sort_by(|a, b| docstring_ids.get(a).cmp(&docstring_ids.get(b)));
 
+    // all docstrings are concatenated into one string, and an offset table gives the position of each docstring.
+    // This avoids the overhead of a fat pointer (and a relocation) for each docstring
+    let mut offsets = vec![0];
     let mut output = String::from("\n#[cfg(feature = \"docstrings\")]\n");
     output.push_str("#[rustfmt::skip]\n");
-    output.push_str(&format!(
-        "pub(crate) static ELEMENT_DOCSTRINGS: [&str; {}] = [\n",
-        docstrings.len()
-    ));
-    for ds in docstrings {
+    output.push_str("pub(crate) static ELEMENT_DOCSTRINGS: &str = concat!(\n");
+    let mut total_len = 0;
+    for ds in &docstrings {
+        total_len += ds.len();
+        offsets.push(total_len);
         output.push_str(&format!("    {ds:?},\n"));
+    }
+    output.push_str(");\n");
+    assert!(u32::try_from(total_len).is_ok());
+
+    output.push_str("\n#[cfg(feature = \"docstrings\")]\n");
+    output.push_str("#[rustfmt::skip]\n");
+    output.push_str(&format!(
+        "pub(crate) static ELEMENT_DOCSTRING_OFFSETS: [u32; {}] = [\n",
+        offsets.len()
+    ));
+    for chunk in offsets.chunks(10) {
+        let chunk_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
+        output.push_str(&format!("    {},\n", chunk_strs.join(", ")));
     }
     output.push_str("];\n");
     output

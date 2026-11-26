@@ -56,11 +56,14 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
     let disps = perfect_hash::make_perfect_hash(&element_name_refs, 7)
         .map_err(|err| format!("element names: {err}"))
         .unwrap();
+    // element names use alphabetically sorted discriminants, so that the specification crate
+    // can binary search the (alphabetically sorted) sub elements of Bag-type elements by comparing discriminants
     let enumstr = generate_enum(
         "ElementName",
         "Enum of all element names in Autosar",
         &element_name_refs,
         &disps,
+        true,
     );
 
     let mut file = File::create("gen/elementname.rs").unwrap();
@@ -75,6 +78,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
         "Enum of all attribute names in Autosar",
         &attribute_name_refs,
         &disps,
+        false,
     );
     let mut file = File::create("gen/attributename.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
@@ -89,6 +93,7 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) {
         "Enum of all possible enum values in Autosar",
         &enum_item_refs,
         &disps,
+        false,
     );
     let mut file = File::create("gen/enumitem.rs").unwrap();
     file.write_all(enumstr.as_bytes()).unwrap();
@@ -99,7 +104,12 @@ fn generate_enum(
     enum_docstring: &str,
     item_names: &[&str],
     disps: &[(u32, u32)],
+    sorted_discriminants: bool,
 ) -> String {
+    // with sorted_discriminants, the discriminant of each item is its position in the sorted list of names,
+    // and an additional table maps the index produced by the perfect hash to the discriminant.
+    // Otherwise the discriminant is the index produced by the perfect hash.
+    assert!(item_names.is_sorted());
     let mut generated = String::new();
     let displen = disps.len();
 
@@ -134,8 +144,12 @@ pub struct Parse{enum_name}Error;
             item_names.len(),
         ))
     });
-    for item_name in item_names {
-        let idx = perfect_hash::get_index(item_name, disps, item_names.len());
+    for (pos, item_name) in item_names.iter().enumerate() {
+        let idx = if sorted_discriminants {
+            pos
+        } else {
+            perfect_hash::get_index(item_name, disps, item_names.len())
+        };
         let ident = name_to_identifier(item_name);
         writeln!(generated, "    /// {item_name}").unwrap();
         writeln!(generated, "    {ident:width$}= {idx},").unwrap();
@@ -143,12 +157,67 @@ pub struct Parse{enum_name}Error;
     writeln!(generated, "}}").unwrap();
 
     let length = item_names.len();
+    let discriminant_order = if sorted_discriminants {
+        item_names
+    } else {
+        &hash_sorted_item_names
+    };
+    // all names are concatenated into one string; STRING_OFFSETS[i]..STRING_OFFSETS[i + 1] is the name of item i.
+    // Compared to an array of &str this avoids the overhead of a fat pointer (and a relocation) per name.
+    let mut offsets = vec![0];
+    let mut total_len = 0;
+    let mut string_data = String::new();
+    for name in discriminant_order {
+        assert!(name.is_ascii());
+        total_len += name.len();
+        offsets.push(total_len);
+        writeln!(string_data, "    {name:?},").unwrap();
+    }
+    let offset_type = if u16::try_from(total_len).is_ok() {
+        "u16"
+    } else {
+        "u32"
+    };
+    let offsets_len = offsets.len();
+    let mut offset_data = String::new();
+    for chunk in offsets.chunks(16) {
+        let chunk_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
+        writeln!(offset_data, "    {},", chunk_strs.join(", ")).unwrap();
+    }
+
+    let slot_mapping = if sorted_discriminants {
+        let mut slot_to_item = vec![0; length];
+        for (pos, name) in item_names.iter().enumerate() {
+            slot_to_item[perfect_hash::get_index(name, disps, length)] = pos;
+        }
+        let mut slot_data = String::new();
+        for chunk in slot_to_item.chunks(16) {
+            let chunk_strs: Vec<String> = chunk.iter().map(ToString::to_string).collect();
+            writeln!(slot_data, "            {},", chunk_strs.join(", ")).unwrap();
+        }
+        format!(
+            "        // map the hash slot to the discriminant
+        #[rustfmt::skip]
+        static SLOT_TO_ITEM: [u16; {length}] = [
+{slot_data}        ];
+        let item_idx = SLOT_TO_ITEM[item_idx] as usize;
+"
+        )
+    } else {
+        String::new()
+    };
+
     generated.push_str(&format!(
         r##"
-impl {enum_name} {{
-    #[rustfmt::skip]
-    const STRING_TABLE: [&'static str; {length}] = {hash_sorted_item_names:?};
+#[rustfmt::skip]
+static STRING_DATA: &str = concat!(
+{string_data});
 
+#[rustfmt::skip]
+static STRING_OFFSETS: [{offset_type}; {offsets_len}] = [
+{offset_data}];
+
+impl {enum_name} {{
     /// derive an enum entry from an input string using a perfect hash function
     ///
     /// # Errors
@@ -164,10 +233,16 @@ impl {enum_name} {{
             .wrapping_add(f1.wrapping_mul(u32::from(d1)))
             .wrapping_add(f2) as usize
             % {length};
-        if {enum_name}::STRING_TABLE[item_idx].as_bytes() != input {{
+{slot_mapping}        if Self::name_bytes(item_idx) != input {{
             return Err(Parse{enum_name}Error);
         }}
         Ok(unsafe {{ core::mem::transmute::<u16, Self>(item_idx as u16) }})
+    }}
+
+    fn name_bytes(item_idx: usize) -> &'static [u8] {{
+        let start = STRING_OFFSETS[item_idx] as usize;
+        let end = STRING_OFFSETS[item_idx + 1] as usize;
+        &STRING_DATA.as_bytes()[start..end]
     }}
 
     /// get the str corresponding to an item
@@ -175,7 +250,10 @@ impl {enum_name} {{
     /// The returned &str has static lifetime, becasue it is a reference to an entry in a list of constants
     #[must_use]
     pub fn to_str(&self) -> &'static str {{
-        {enum_name}::STRING_TABLE[*self as usize]
+        // all names are ASCII, so every offset is a char boundary
+        let start = STRING_OFFSETS[*self as usize] as usize;
+        let end = STRING_OFFSETS[*self as usize + 1] as usize;
+        &STRING_DATA[start..end]
     }}
 }}
 
@@ -188,13 +266,13 @@ impl core::str::FromStr for {enum_name} {{
 
 impl core::fmt::Debug for {enum_name} {{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
-        f.write_str({enum_name}::STRING_TABLE[*self as usize])
+        f.write_str(self.to_str())
     }}
 }}
 
 impl core::fmt::Display for {enum_name} {{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
-        f.write_str({enum_name}::STRING_TABLE[*self as usize])
+        f.write_str(self.to_str())
     }}
 }}
 "##

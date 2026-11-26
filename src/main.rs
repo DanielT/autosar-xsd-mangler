@@ -229,14 +229,14 @@ fn core() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
-        println!("usage: {} <input xsd path>", &args[0]);
+        println!("usage: {} <input xsd path>", args[0]);
         std::process::exit(1);
     }
 
     let path = Path::new(&args[1]);
     if !path.exists() {
-        println!("Error: path \"{}\" does not exist.", &args[1]);
-        println!("usage: {} <xsd path>", &args[0]);
+        println!("Error: path \"{}\" does not exist.", args[1]);
+        println!("usage: {} <xsd path>", args[0]);
         std::process::exit(2);
     }
 

@@ -1,8 +1,8 @@
-use crate::generator::name_to_identifier;
+use crate::generator::{name_to_identifier, VersionMasks};
 use crate::{AutosarDataTypes, CharacterDataType};
 use rustc_hash::FxHashMap;
 
-pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
+pub(crate) fn generate(autosar_schema: &AutosarDataTypes, version_masks: &VersionMasks) -> String {
     let regexes: FxHashMap<String, String> = VALIDATOR_REGEX_MAPPING
         .iter()
         .map(|(regex, name)| ((*regex).to_string(), (*name).to_string()))
@@ -42,11 +42,15 @@ pub(crate) fn generate(autosar_schema: &AutosarDataTypes) -> String {
                     .enumitems
                     .iter()
                     .map(|(name, ver)| {
-                        format!("(EnumItem::{}, 0x{ver:x})", name_to_identifier(name))
+                        format!(
+                            "(EnumItem::{}, {})",
+                            name_to_identifier(name),
+                            version_masks.idx(*ver)
+                        )
                     })
                     .collect();
                 format!(
-                    r#"CharacterDataSpec::Enum{{items: &[{}]}}"#,
+                    r#"CharacterDataSpec::Enum{{items: EnumItemList::new(&[{}], &VERSION_MASKS)}}"#,
                     enumitem_strs.join(", ")
                 )
             }
